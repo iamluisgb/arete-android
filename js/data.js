@@ -44,12 +44,38 @@ export function setOnQuotaError(fn) { _onQuotaError = fn; }
 /** @param {Function} fn - Callback invoked when another tab changes the data */
 export function setOnExternalChange(fn) { _onExternalChange = fn; }
 
-// Detect writes from other tabs
-if (typeof window !== 'undefined') {
+// Detect writes from other tabs (not in native)
+if (typeof window !== 'undefined' && !isCapacitor) {
   window.addEventListener('storage', (e) => {
-    if (e.key === SK && _onExternalChange) _onExternalChange();
+    if (e.key === STORAGE_KEY && _onExternalChange) _onExternalChange();
   });
 }
+
+// Storage wrapper that works in both web and Capacitor native
+const Storage = {
+  async getItem(key) {
+    if (isCapacitor) {
+      const { Preferences } = await import('@capacitor/preferences');
+      const { value } = await Preferences.get({ key });
+      return value;
+    }
+    return localStorage.getItem(key);
+  },
+  async setItem(key, value) {
+    if (isCapacitor) {
+      const { Preferences } = await import('@capacitor/preferences');
+      await Preferences.set({ key, value });
+    }
+    localStorage.setItem(key, value);
+  },
+  async removeItem(key) {
+    if (isCapacitor) {
+      const { Preferences } = await import('@capacitor/preferences');
+      await Preferences.delete({ key });
+    }
+    localStorage.removeItem(key);
+  }
+};
 
 const CURRENT_SCHEMA = 4;
 
@@ -93,17 +119,20 @@ export function migrateDB(db) {
   return db;
 }
 
-/** Load database from localStorage, falling back to defaults */
-export function loadDB() {
+/** Load database from storage, falling back to defaults */
+export async function loadDB() {
   try {
-    const d = JSON.parse(localStorage.getItem(SK));
-    if (d && d.workouts) {
-      const db = { ...DEFAULTS, ...d };
-      return migrateDB(db);
+    const raw = await Storage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d && d.workouts) {
+        const db = { ...DEFAULTS, ...d };
+        return migrateDB(db);
+      }
     }
     return { ...DEFAULTS };
   } catch (e) {
-    console.warn('loadDB: corrupt localStorage data, using defaults', e);
+    console.warn('loadDB: corrupt storage data, using defaults', e);
     return { ...DEFAULTS };
   }
 }
@@ -136,17 +165,17 @@ export function pruneDeletedIds(db) {
 let _saveRevision = 0;
 export function getSaveRevision() { return _saveRevision; }
 
-/** Persist db to localStorage (validates structure first) */
-export function saveDB(db) {
+/** Persist db to storage (validates structure first) */
+export async function saveDB(db) {
   if (!validateDB(db)) { console.error('saveDB: invalid db, aborting save', db); return; }
   pruneDeletedIds(db);
   try {
     // Strip heavy fields (route, splits, hrTimeSeries, etc.) from running logs
-    // to keep localStorage small. Heavy data lives in IndexedDB.
+    // to keep storage small. Heavy data lives in IndexedDB.
     const dbForStorage = db.runningLogs?.length
       ? { ...db, runningLogs: db.runningLogs.map(stripHeavyFields) }
       : db;
-    localStorage.setItem(SK, JSON.stringify(dbForStorage));
+    await Storage.setItem(STORAGE_KEY, JSON.stringify(dbForStorage));
     _saveRevision++;
   } catch (e) {
     console.error('saveDB: storage write failed', e);
@@ -224,6 +253,6 @@ export function importData(event, db, onSuccess) {
 export function clearAllData() {
   if (!confirm('¿Borrar TODOS los datos?')) return;
   if (!confirm('Última oportunidad. ¿Borrar todo?')) return;
-  localStorage.removeItem(SK);
+  Storage.removeItem(STORAGE_KEY);
   clearRunStore().finally(() => location.reload());
 }

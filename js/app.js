@@ -43,115 +43,116 @@ if (isCapacitor) {
   });
 }
 
-const db = loadDB();
-const AUTOSYNC_KEY = 'areteAutoSync';
-const THEME_KEY = 'areteTheme';
-
-// --- Theme ---
-function applyTheme(theme) {
-  const isDark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme:dark)').matches);
-  document.documentElement.classList.toggle('dark', isDark);
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = isDark ? '#131313' : '#f4f2f0';
-}
-
-function initTheme() {
-  const saved = localStorage.getItem(THEME_KEY) || 'auto';
-  applyTheme(saved);
-  // Listen for system changes when in auto mode
-  window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', () => {
-    if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme('auto');
-  });
-  // Selector buttons
-  document.querySelectorAll('#themeOptions .theme-opt').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.theme === saved);
-    btn.addEventListener('click', () => {
-      const t = btn.dataset.theme;
-      localStorage.setItem(THEME_KEY, t);
-      applyTheme(t);
-      document.querySelectorAll('#themeOptions .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === t));
-    });
-  });
-}
-
-// Apply theme immediately to prevent flash
-applyTheme(localStorage.getItem(THEME_KEY) || 'auto');
-
-function debounce(fn, ms) {
-  let t, lastArgs;
-  const d = (...args) => { clearTimeout(t); lastArgs = args; t = setTimeout(() => { lastArgs = null; fn(...args); }, ms); };
-  d.flush = () => { if (lastArgs) { clearTimeout(t); const a = lastArgs; lastArgs = null; fn(...a); } };
-  return d;
-}
-
-function isAutoSync() { return localStorage.getItem(AUTOSYNC_KEY) === '1'; }
-
-function updateSyncUI() {
-  const btn = document.getElementById('autoSyncBtn');
-  const desc = document.getElementById('autoSyncDesc');
-  if (isAutoSync()) {
-    btn.classList.add('active');
-    desc.textContent = 'Activada';
-  } else {
-    btn.classList.remove('active');
-    desc.textContent = 'Desactivada';
-  }
-}
-
-function renderCustomProgramsList() {
-  const list = document.getElementById('customProgramsList');
-  const customs = getCustomPrograms(db);
-  if (customs.length === 0) {
-    list.innerHTML = '';
-    return;
-  }
-  list.innerHTML = customs.map(p => {
-    const name = esc(p._meta?.name || 'Sin nombre');
-    const desc = esc(p._meta?.desc || '');
-    return `<div class="custom-prog-item">
-      <div style="flex:1"><div class="custom-prog-name">${name}</div>${desc ? `<div class="custom-prog-desc">${desc}</div>` : ''}</div>
-      <span class="custom-prog-badge">Custom</span>
-      <button class="custom-prog-del" data-prog-id="${esc(p._customId)}">Eliminar</button>
-    </div>`;
-  }).join('');
-}
-
-function renderProgramSelector() {
-  const progList = getProgramList();
-  const active = db.program || 'arete';
-  const activeProg = progList.find(p => p.id === active);
-  document.getElementById('activeProgramName').textContent = activeProg?.name || active;
-
-  const modal = document.getElementById('programModal');
-  const options = document.getElementById('programOptions');
-  options.innerHTML = progList.map(p => {
-    const isCustom = !isBuiltinProgram(p.id);
-    const badge = isCustom ? '<span class="custom-prog-badge" style="margin-left:6px">Custom</span>' : '';
-    return `<div class="prog-modal-item${p.id === active ? ' active' : ''}" data-prog="${esc(p.id)}">
-      <div style="flex:1"><div class="prog-modal-name">${esc(p.name)}${badge}</div><div class="prog-modal-desc">${esc(p.desc)}</div></div>
-    </div>`;
-  }).join('');
-}
-
-// === SEED ===
-function seedInitialData() {
-  if (db.workouts.length > 0) return;
-  db.workouts.push({
-    id: 1739145600000, date: '2026-02-09', session: 'Sesión A', phase: 1, notes: 'Primera sesión',
-    exercises: [
-      { name: 'Sentadilla', sets: [{ kg: '65', reps: '5' }, { kg: '65', reps: '5' }, { kg: '65', reps: '5' }] },
-      { name: 'Press de Banca', sets: [{ kg: '50', reps: '5' }, { kg: '50', reps: '5' }, { kg: '50', reps: '5' }] },
-      { name: 'Peso Muerto', sets: [{ kg: '70', reps: '5' }, { kg: '70', reps: '5' }] },
-      { name: 'Dominada Prono', sets: [{ kg: '', reps: '14' }, { kg: '', reps: '11' }, { kg: '', reps: '8' }] },
-      { name: 'Plancha Abdominal', sets: [{ kg: '', reps: '2min' }, { kg: '', reps: '2min' }] }
-    ]
-  });
-  saveDB(db);
+// === Google Drive: inject GIS script for Capacitor ===
+if (isCapacitor && typeof google === 'undefined') {
+  const script = document.createElement('script');
+  script.src = 'https://accounts.google.com/gsi/client';
+  script.async = true;
+  script.defer = true;
+  document.head.appendChild(script);
 }
 
 // === INIT ===
 async function init() {
-  seedInitialData();
+  // Load DB from storage (async for Capacitor Preferences)
+  const db = await loadDB();
+  const AUTOSYNC_KEY = 'areteAutoSync';
+  const THEME_KEY = 'areteTheme';
+
+  // --- Theme ---
+  function applyTheme(theme) {
+    const isDark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme:dark)').matches);
+    document.documentElement.classList.toggle('dark', isDark);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = isDark ? '#131313' : '#f4f2f0';
+  }
+
+  function initTheme() {
+    const saved = localStorage.getItem(THEME_KEY) || 'auto';
+    applyTheme(saved);
+    window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', () => {
+      if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme('auto');
+    });
+    document.querySelectorAll('#themeOptions .theme-opt').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.theme === saved);
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.theme;
+        localStorage.setItem(THEME_KEY, t);
+        applyTheme(t);
+        document.querySelectorAll('#themeOptions .theme-opt').forEach(b => b.classList.toggle('active', b.dataset.theme === t));
+      });
+    });
+  }
+
+  applyTheme(localStorage.getItem(THEME_KEY) || 'auto');
+
+  function debounce(fn, ms) {
+    let t, lastArgs;
+    const d = (...args) => { clearTimeout(t); lastArgs = args; t = setTimeout(() => { lastArgs = null; fn(...args); }, ms); };
+    d.flush = () => { if (lastArgs) { clearTimeout(t); const a = lastArgs; lastArgs = null; fn(...a); } };
+    return d;
+  }
+
+  function isAutoSync() { return localStorage.getItem(AUTOSYNC_KEY) === '1'; }
+
+  function updateSyncUI() {
+    const btn = document.getElementById('autoSyncBtn');
+    const desc = document.getElementById('autoSyncDesc');
+    if (isAutoSync()) {
+      btn.classList.add('active');
+      desc.textContent = 'Activada';
+    } else {
+      btn.classList.remove('active');
+      desc.textContent = 'Desactivada';
+    }
+  }
+
+  function renderCustomProgramsList() {
+    const list = document.getElementById('customProgramsList');
+    const customs = getCustomPrograms(db);
+    if (customs.length === 0) { list.innerHTML = ''; return; }
+    list.innerHTML = customs.map(p => {
+      const name = esc(p._meta?.name || 'Sin nombre');
+      const desc = esc(p._meta?.desc || '');
+      return `<div class="custom-prog-item">
+        <div style="flex:1"><div class="custom-prog-name">${name}</div>${desc ? '<div class="custom-prog-desc">' + desc + '</div>' : ''}</div>
+        <span class="custom-prog-badge">Custom</span>
+        <button class="custom-prog-del" data-prog-id="${esc(p._customId)}">Eliminar</button>
+      </div>`;
+    }).join('');
+  }
+
+  function renderProgramSelector() {
+    const progList = getProgramList();
+    const active = db.program || 'arete';
+    const activeProg = progList.find(p => p.id === active);
+    document.getElementById('activeProgramName').textContent = activeProg?.name || active;
+    const modal = document.getElementById('programModal');
+    const options = document.getElementById('programOptions');
+    options.innerHTML = progList.map(p => {
+      const isCustom = !isBuiltinProgram(p.id);
+      const badge = isCustom ? '<span class="custom-prog-badge" style="margin-left:6px">Custom</span>' : '';
+      return `<div class="prog-modal-item${p.id === active ? ' active' : ''}" data-prog="${esc(p.id)}">
+        <div style="flex:1"><div class="prog-modal-name">${esc(p.name)}${badge}</div><div class="prog-modal-desc">${esc(p.desc)}</div></div>
+      </div>`;
+    }).join('');
+  }
+
+  // === SEED initial data if empty ===
+  if (db.workouts.length === 0) {
+    db.workouts.push({
+      id: 1739145600000, date: '2026-02-09', session: 'Sesión A', phase: 1, notes: 'Primera sesión',
+      exercises: [
+        { name: 'Sentadilla', sets: [{ kg: '65', reps: '5' }, { kg: '65', reps: '5' }, { kg: '65', reps: '5' }] },
+        { name: 'Press de Banca', sets: [{ kg: '50', reps: '5' }, { kg: '50', reps: '5' }, { kg: '50', reps: '5' }] },
+        { name: 'Peso Muerto', sets: [{ kg: '70', reps: '5' }, { kg: '70', reps: '5' }] },
+        { name: 'Dominada Prono', sets: [{ kg: '', reps: '14' }, { kg: '', reps: '11' }, { kg: '', reps: '8' }] },
+        { name: 'Plancha Abdominal', sets: [{ kg: '', reps: '2min' }, { kg: '', reps: '2min' }] }
+      ]
+    });
+    await saveDB(db);
+  }
+
   initToast();
   initTheme();
 
@@ -162,7 +163,7 @@ async function init() {
       const programs = JSON.parse(oldCustom);
       if (Array.isArray(programs) && programs.length > 0) {
         db.customPrograms = programs;
-        saveDB(db);
+        await saveDB(db);
       }
     } catch { /* ignore corrupt data */ }
     localStorage.removeItem('customPrograms');
@@ -171,12 +172,11 @@ async function init() {
   // One-shot migration: move heavy route data from localStorage to IndexedDB
   if (db.runningLogs?.some(l => l.route?.coords)) {
     db.runningLogs = await splitAndStoreRoutes(db.runningLogs);
-    saveDB(db);
+    await saveDB(db);
   }
 
   await loadPrograms(db);
 
-  // Set active program from saved state + render selector
   setActiveProgram(db.program || 'arete');
   renderProgramSelector();
 
@@ -263,7 +263,7 @@ async function init() {
     if (btn) { switchTab(btn, db); }
   });
   document.getElementById('appVersion').textContent = `Areté v${APP_VERSION}`;
-  bindEvents();
+  bindEvents(db, { AUTOSYNC_KEY, isAutoSync, updateSyncUI, debounce, renderProgramSelector, renderCustomProgramsList });
 
   // Sync indicator
   const syncEl = document.getElementById('syncIndicator');
@@ -275,7 +275,7 @@ async function init() {
 
   // Auto-sync: debounced backup on every saveDB
   const debouncedBackup = debounce((d) => silentBackup(d), DEBOUNCE_BACKUP_MS);
-  setOnSave((d) => { if (isAutoSync() && !isSyncing()) debouncedBackup(d); });
+  setOnSave(async (d) => { if (isAutoSync() && !isSyncing()) debouncedBackup(d); });
   setOnQuotaError(() => {
     toast('Almacenamiento lleno. Exporta tus datos para no perder información.', 'error');
   });
@@ -321,7 +321,9 @@ async function init() {
 }
 
 // === EVENT BINDING ===
-function bindEvents() {
+function bindEvents(db, helpers) {
+  const { AUTOSYNC_KEY, isAutoSync, updateSyncUI, debounce, renderProgramSelector, renderCustomProgramsList } = helpers;
+
   // Delegate to UI modules
   initNav(db);
   initTraining(db, { onCancelEdit: () => cancelEdit(db) });
@@ -450,10 +452,11 @@ function bindEvents() {
   document.querySelector('#secSettings .sc-row-danger').addEventListener('click', () => clearAllData());
 }
 
+// Start
 init();
 
-// Register Service Worker + prompt update
-if ('serviceWorker' in navigator) {
+// Register Service Worker + prompt update (not in Capacitor)
+if (!isCapacitor && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {
       const newSW = reg.installing;
@@ -465,7 +468,6 @@ if ('serviceWorker' in navigator) {
     });
   }).catch(e => console.log('SW failed', e));
 
-  // Reload when new SW takes over
   let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!refreshing) { refreshing = true; location.reload(); }
