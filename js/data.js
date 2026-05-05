@@ -51,28 +51,16 @@ if (typeof window !== 'undefined' && !isCapacitor) {
   });
 }
 
-// Storage wrapper that works in both web and Capacitor native
+// Storage wrapper — localStorage works in Capacitor WebView (50MB+ quota)
+// Preferences has only ~4MB limit, so we use localStorage for everything
 const Storage = {
-  async getItem(key) {
-    if (isCapacitor) {
-      const { Preferences } = await import('@capacitor/preferences');
-      const { value } = await Preferences.get({ key });
-      return value;
-    }
+  getItem(key) {
     return localStorage.getItem(key);
   },
-  async setItem(key, value) {
-    if (isCapacitor) {
-      const { Preferences } = await import('@capacitor/preferences');
-      await Preferences.set({ key, value });
-    }
+  setItem(key, value) {
     localStorage.setItem(key, value);
   },
-  async removeItem(key) {
-    if (isCapacitor) {
-      const { Preferences } = await import('@capacitor/preferences');
-      await Preferences.delete({ key });
-    }
+  removeItem(key) {
     localStorage.removeItem(key);
   }
 };
@@ -119,10 +107,10 @@ export function migrateDB(db) {
   return db;
 }
 
-/** Load database from storage, falling back to defaults */
-export async function loadDB() {
+/** Load database from localStorage, falling back to defaults */
+export function loadDB() {
   try {
-    const raw = await Storage.getItem(STORAGE_KEY);
+    const raw = Storage.getItem(STORAGE_KEY);
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.workouts) {
@@ -165,17 +153,15 @@ export function pruneDeletedIds(db) {
 let _saveRevision = 0;
 export function getSaveRevision() { return _saveRevision; }
 
-/** Persist db to storage (validates structure first) */
-export async function saveDB(db) {
+/** Persist db to localStorage (validates structure first) */
+export function saveDB(db) {
   if (!validateDB(db)) { console.error('saveDB: invalid db, aborting save', db); return; }
   pruneDeletedIds(db);
   try {
-    // Strip heavy fields (route, splits, hrTimeSeries, etc.) from running logs
-    // to keep storage small. Heavy data lives in IndexedDB.
     const dbForStorage = db.runningLogs?.length
       ? { ...db, runningLogs: db.runningLogs.map(stripHeavyFields) }
       : db;
-    await Storage.setItem(STORAGE_KEY, JSON.stringify(dbForStorage));
+    Storage.setItem(STORAGE_KEY, JSON.stringify(dbForStorage));
     _saveRevision++;
   } catch (e) {
     console.error('saveDB: storage write failed', e);

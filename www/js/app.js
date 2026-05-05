@@ -55,7 +55,8 @@ if (isCapacitor && typeof google === 'undefined') {
 // === INIT ===
 async function init() {
   // Load DB from storage (async for Capacitor Preferences)
-  const db = await loadDB();
+  // Load DB (synchronous — localStorage)
+  const db = loadDB();
   const AUTOSYNC_KEY = 'areteAutoSync';
   const THEME_KEY = 'areteTheme';
 

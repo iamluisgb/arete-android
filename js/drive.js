@@ -44,6 +44,10 @@ function restoreToken() {
 /** Initialize Google Identity Services token client */
 export function initDrive() {
   restoreToken();
+  if (typeof google === 'undefined' || !google.accounts) {
+    console.warn('initDrive: Google Identity Services not loaded yet');
+    return;
+  }
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPE,
