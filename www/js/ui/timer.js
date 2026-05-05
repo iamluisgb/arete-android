@@ -1,0 +1,281 @@
+import { DEFAULT_TIMER_DURATION } from '../constants.js';
+import { getAudioCtx } from './audio.js';
+
+const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
+
+let timerInterval = null;
+let timerRunning = false;
+let timerDuration = DEFAULT_TIMER_DURATION;
+let timerMode = 'countdown';
+
+// Wall-clock timing — survives background suspension
+let startedAt = 0;
+let elapsedBase = 0;
+
+function getElapsed() {
+  return elapsedBase + Math.floor((Date.now() - startedAt) / 1000);
+}
+
+function getRemaining() {
+  return Math.max(0, timerDuration - Math.floor((Date.now() - startedAt) / 1000));
+}
+
+// --- Notification helpers ---
+
+function swPost(msg) {
+  if (isCapacitor) {
+    if (msg.type === 'timer-alarm') {
+      import('@capacitor/haptics').then(({ Haptics }) => {
+        Haptics.notificationFeedback({ type: 'success' });
+        Haptics.impactFeedback({ style: 'heavy' });
+      });
+    }
+    return;
+  }
+  if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage(msg);
+}
+
+function showTimerNotification() {
+  if (Notification.permission !== 'granted' || !timerRunning) return;
+  swPost({
+    type: 'timer-start-live',
+    mode: timerMode,
+    startedAt,
+    duration: timerDuration,
+    elapsedBase,
+  });
+}
+
+function clearTimerNotification() {
+  swPost({ type: 'timer-clear' });
+}
+
+function showAlarmNotification() {
+  if (Notification.permission !== 'granted') return;
+  swPost({ type: 'timer-alarm' });
+}
+
+export function playAlarm() {
+  try {
+    const ctx = getAudioCtx(), now = ctx.currentTime;
+    [0, .25, .5].forEach((offset, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination); o.type = 'sine';
+      o.frequency.value = 880 + i * 220;
+      g.gain.setValueAtTime(.3, now + offset);
+      g.gain.exponentialRampToValueAtTime(.01, now + offset + .2);
+      o.start(now + offset); o.stop(now + offset + .2);
+    });
+    [1320, 1760].forEach(f => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination); o.type = 'sine';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(.2, now + .9);
+      g.gain.exponentialRampToValueAtTime(.01, now + 1.6);
+      o.start(now + .9); o.stop(now + 1.7);
+    });
+  } catch (e) { }
+}
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60), s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function updateTimerDisplay() {
+  const d = document.getElementById('timerDisplay');
+  const mt = document.getElementById('miniTimerTime');
+  if (timerMode === 'countdown') {
+    const remaining = timerRunning ? getRemaining() : timerDuration;
+    const text = formatTime(remaining);
+    const warn = timerRunning && remaining <= 10 && remaining > 0;
+    d.textContent = text;
+    d.classList.toggle('warning', warn);
+    if (mt) { mt.textContent = text; mt.classList.toggle('warning', warn); }
+  } else {
+    const elapsed = timerRunning ? getElapsed() : elapsedBase;
+    const text = formatTime(elapsed);
+    d.textContent = text;
+    if (mt) { mt.textContent = text; mt.classList.remove('warning'); }
+  }
+  // Show/hide mini-timer based on timer-bar visibility
+  updateMiniTimerVisibility();
+}
+
+function tick() {
+  updateTimerDisplay();
+  if (timerMode === 'countdown' && timerRunning && getRemaining() <= 0) {
+    if (document.visibilityState === 'hidden') showAlarmNotification();
+    stopTimer();
+    const d = document.getElementById('timerDisplay');
+    d.classList.add('done'); d.textContent = '¡GO!';
+    playAlarm();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+    setTimeout(() => { d.classList.remove('done'); updateTimerDisplay(); }, 3000);
+  }
+}
+
+function requestNotifPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function startTimer() {
+  startedAt = Date.now();
+  if (timerMode === 'countdown') elapsedBase = 0;
+  timerRunning = true;
+  const btn = document.getElementById('timerStartBtn');
+  btn.textContent = '⏹'; btn.classList.add('running');
+  updateTimerDisplay();
+  timerInterval = setInterval(tick, 250);
+  requestNotifPermission();
+}
+
+function stopTimer() {
+  if (timerMode === 'stopwatch' && timerRunning) elapsedBase = getElapsed();
+  clearInterval(timerInterval);
+  timerRunning = false;
+  const btn = document.getElementById('timerStartBtn');
+  btn.textContent = '▶'; btn.classList.remove('running');
+  document.getElementById('timerDisplay').classList.remove('warning', 'done');
+  updateTimerDisplay();
+  clearTimerNotification();
+}
+
+export function toggleTimer() {
+  getAudioCtx().resume();
+  if (timerRunning) stopTimer(); else startTimer();
+}
+
+export function setTimerMode(mode) {
+  if (timerRunning) stopTimer();
+  timerMode = mode;
+  const bar = document.getElementById('timerBar');
+  bar.classList.remove('mode-countdown', 'mode-stopwatch');
+  bar.classList.add('mode-' + mode);
+
+  document.querySelectorAll('.timer-mode').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.timer-mode[data-mode="${mode}"]`).classList.add('active');
+
+  document.getElementById('timerCustomInput').classList.remove('visible');
+  document.getElementById('timerDisplay').style.display = '';
+
+  elapsedBase = 0;
+  updateTimerDisplay();
+}
+
+export function showCustomInput() {
+  const input = document.getElementById('timerCustomInput');
+  const display = document.getElementById('timerDisplay');
+  input.classList.add('visible');
+  display.style.display = 'none';
+  const m = Math.floor(timerDuration / 60), s = timerDuration % 60;
+  input.value = `${m}:${s.toString().padStart(2, '0')}`;
+  input.focus();
+  input.select();
+}
+
+export function confirmCustomInput() {
+  const input = document.getElementById('timerCustomInput');
+  const display = document.getElementById('timerDisplay');
+  const raw = input.value.trim();
+
+  let seconds = 0;
+  if (raw.includes(':')) {
+    const parts = raw.split(':');
+    seconds = (parseInt(parts[0]) || 0) * 60 + (parseInt(parts[1]) || 0);
+  } else {
+    seconds = parseInt(raw) || 0;
+  }
+
+  if (seconds > 0 && seconds <= 5999) {
+    timerDuration = seconds;
+    document.querySelectorAll('.timer-btn[data-dur]').forEach(b => b.classList.remove('active-dur'));
+  }
+
+  input.classList.remove('visible');
+  display.style.display = '';
+  updateTimerDisplay();
+}
+
+export function resetStopwatch() {
+  if (timerRunning) stopTimer();
+  elapsedBase = 0;
+  updateTimerDisplay();
+}
+
+// --- Mini-timer flotante ---
+
+let timerBarVisible = true;
+
+function updateMiniTimerVisibility() {
+  const mini = document.getElementById('miniTimer');
+  if (!mini) return;
+  mini.classList.toggle('visible', timerRunning && !timerBarVisible);
+}
+
+function setupMiniTimer() {
+  const timerBar = document.getElementById('timerBar');
+  const mini = document.getElementById('miniTimer');
+  if (!timerBar || !mini) return;
+
+  // IntersectionObserver to detect when timer-bar scrolls out of view
+  const observer = new IntersectionObserver(([entry]) => {
+    timerBarVisible = entry.isIntersecting;
+    updateMiniTimerVisibility();
+  }, { threshold: 0.1 });
+  observer.observe(timerBar);
+
+  // Click on mini-timer time → scroll to timer-bar
+  mini.querySelector('.mini-timer-time')?.addEventListener('click', () => {
+    timerBar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+
+  // Stop button on mini-timer
+  document.getElementById('miniTimerStop')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    stopTimer();
+  });
+}
+
+/** Initialize timer: presets, mode toggles, and event bindings */
+export function initTimer() {
+  // Duration preset buttons
+  document.querySelectorAll('.timer-btn[data-dur]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.timer-btn[data-dur]').forEach(b => b.classList.remove('active-dur'));
+      btn.classList.add('active-dur');
+      timerDuration = parseInt(btn.dataset.dur);
+      if (!timerRunning) updateTimerDisplay();
+    });
+  });
+
+  // Start/stop, mode toggle, custom input, reset
+  document.getElementById('timerStartBtn').addEventListener('click', () => toggleTimer());
+  document.querySelectorAll('.timer-mode[data-mode]').forEach(btn => {
+    btn.addEventListener('click', () => setTimerMode(btn.dataset.mode));
+  });
+  document.getElementById('timerCustomBtn').addEventListener('click', () => showCustomInput());
+  const customInput = document.getElementById('timerCustomInput');
+  customInput.addEventListener('blur', () => confirmCustomInput());
+  customInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') customInput.blur(); });
+  document.getElementById('timerResetBtn').addEventListener('click', () => resetStopwatch());
+
+  // Catch up immediately when returning from background; manage notifications
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && timerRunning) {
+      showTimerNotification();
+    } else if (document.visibilityState === 'visible') {
+      clearTimerNotification();
+      if (timerRunning) tick();
+    }
+  });
+
+  document.addEventListener('touchstart', function u() {
+    getAudioCtx().resume();
+    document.removeEventListener('touchstart', u);
+  }, { once: true });
+
+  setupMiniTimer();
+}

@@ -1,0 +1,182 @@
+{
+  "_meta": { "name": "Media Maratón 1h40", "desc": "8 semanas · 4 sesiones/semana · Nivel avanzado", "sport": "running" },
+  "1": {
+    "name": "Semana 1",
+    "desc": "Ciclo 1 · Descubrimiento",
+    "sessions": {
+      "VAM - 12×200m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 12, "distance": "200m", "zone": "Z5", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje con desnivel": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h", "zone": "Z2", "desc": "Terreno con desniveles" }
+      ],
+      "Ritmo específico - 6×1km": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 6, "distance": "1km", "pace": "4:37/km", "recovery": "2min trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje largo": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h30", "zone": "Z2", "desc": "Terreno llano, ritmo conversacional" }
+      ]
+    }
+  },
+  "2": {
+    "name": "Semana 2",
+    "desc": "Ciclo 1 · Progresión",
+    "sessions": {
+      "VAM - 10×300m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 10, "distance": "300m", "zone": "Z5", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje intermedio": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "45min", "zone": "Z2" },
+        { "name": "Ritmo intermedio", "mode": "run-steady", "duration": "15min", "zone": "Z3" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "15min", "zone": "Z1" }
+      ],
+      "Ritmo específico - 4×2km": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 4, "distance": "2km", "pace": "4:37/km", "recovery": "2min30 trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje largo": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h30", "zone": "Z2", "desc": "Terreno llano" }
+      ]
+    }
+  },
+  "3": {
+    "name": "Semana 3",
+    "desc": "Ciclo 1 · Carga máxima",
+    "sessions": {
+      "VAM - 10×400m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 10, "distance": "400m", "zone": "Z5", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje con desnivel": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h", "zone": "Z2", "desc": "Terreno con desniveles" }
+      ],
+      "Ritmo específico - 3+3+1km": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Bloque 1", "mode": "run-intervals", "reps": 1, "distance": "3km", "pace": "4:37/km", "recovery": "2min30 trote" },
+        { "name": "Bloque 2", "mode": "run-intervals", "reps": 1, "distance": "3km", "pace": "4:37/km", "recovery": "2min trote" },
+        { "name": "Bloque 3", "mode": "run-intervals", "reps": 1, "distance": "1km", "pace": "4:30/km", "recovery": "—" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje largo": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h45", "zone": "Z2", "desc": "Terreno llano" }
+      ]
+    }
+  },
+  "4": {
+    "name": "Semana 4",
+    "desc": "Recuperación",
+    "sessions": {
+      "VAM suave - 8×200m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 8, "distance": "200m", "zone": "Z4", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje suave": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "50min", "zone": "Z2", "desc": "Recuperación activa" }
+      ],
+      "Rodaje medio": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h", "zone": "Z2", "desc": "Terreno llano, ritmo cómodo" }
+      ]
+    }
+  },
+  "5": {
+    "name": "Semana 5",
+    "desc": "Ciclo 2 · Carga progresiva",
+    "sessions": {
+      "VAM - 8×500m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 8, "distance": "500m", "zone": "Z5", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje intermedio": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "45min", "zone": "Z2" },
+        { "name": "Ritmo intermedio", "mode": "run-steady", "duration": "15min", "zone": "Z3" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "15min", "zone": "Z1" }
+      ],
+      "Ritmo específico - 4+3+2km": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Bloque 1", "mode": "run-intervals", "reps": 1, "distance": "4km", "pace": "4:37/km", "recovery": "2min30 trote" },
+        { "name": "Bloque 2", "mode": "run-intervals", "reps": 1, "distance": "3km", "pace": "4:37/km", "recovery": "2min trote" },
+        { "name": "Bloque 3", "mode": "run-intervals", "reps": 1, "distance": "2km", "pace": "4:30/km", "recovery": "—" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje largo": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h45", "zone": "Z2", "desc": "Terreno llano" }
+      ]
+    }
+  },
+  "6": {
+    "name": "Semana 6",
+    "desc": "Ciclo 2 · Carga máxima",
+    "sessions": {
+      "VAM - 6×600m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 6, "distance": "600m", "zone": "Z5", "recovery": "300m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje con desnivel": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h15", "zone": "Z2", "desc": "Terreno variado con cuestas" }
+      ],
+      "Ritmo específico - 5+3+1km": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Bloque 1", "mode": "run-intervals", "reps": 1, "distance": "5km", "pace": "4:37/km", "recovery": "2min30 trote" },
+        { "name": "Bloque 2", "mode": "run-intervals", "reps": 1, "distance": "3km", "pace": "4:37/km", "recovery": "2min trote" },
+        { "name": "Bloque 3", "mode": "run-intervals", "reps": 1, "distance": "1km", "pace": "4:25/km", "recovery": "—" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje largo": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "2h", "zone": "Z2", "desc": "Terreno llano, probar hidratación" }
+      ]
+    }
+  },
+  "7": {
+    "name": "Semana 7",
+    "desc": "Disminución",
+    "sessions": {
+      "VAM - 8×300m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 8, "distance": "300m", "zone": "Z5", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje suave": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "50min", "zone": "Z2", "desc": "Recuperación" }
+      ],
+      "Ritmo específico - 3×2km": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "20min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 3, "distance": "2km", "pace": "4:37/km", "recovery": "2min trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje medio": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "1h15", "zone": "Z2", "desc": "Terreno llano" }
+      ]
+    }
+  },
+  "8": {
+    "name": "Semana 8",
+    "desc": "Regeneración + Competición",
+    "sessions": {
+      "VAM suave - 6×200m": [
+        { "name": "Calentamiento", "mode": "run-steady", "duration": "15min", "zone": "Z2" },
+        { "name": "Series", "mode": "run-intervals", "reps": 6, "distance": "200m", "zone": "Z4", "recovery": "200m trote" },
+        { "name": "Vuelta a la calma", "mode": "run-steady", "duration": "10min", "zone": "Z1" }
+      ],
+      "Rodaje suave": [
+        { "name": "Rodaje", "mode": "run-steady", "duration": "40min", "zone": "Z2", "desc": "Muy suave, patas frescas" }
+      ],
+      "Pre-competición": [
+        { "name": "Trote suave", "mode": "run-steady", "duration": "20min", "zone": "Z1", "desc": "Activación suave, estiramientos dinámicos" }
+      ],
+      "Media Maratón": [
+        { "name": "Competición", "mode": "run-steady", "duration": "1h40", "zone": "Z4", "desc": "21.1 km · Objetivo: 1h40 · Ritmo: 4:44/km" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "bodyMeasures": [
+    { "id": "peso", "label": "Peso (kg)" },
+    { "id": "grasa", "label": "% Grasa" },
+    { "id": "muneca", "label": "Mu\u00f1eca" },
+    { "id": "biceps", "label": "B\u00edceps" },
+    { "id": "pecho", "label": "Pecho" },
+    { "id": "hombros", "label": "Hombros" },
+    { "id": "cintura", "label": "Cintura" },
+    { "id": "cuello", "label": "Cuello" },
+    { "id": "muslo", "label": "Muslo" },
+    { "id": "rodilla", "label": "Rodilla" },
+    { "id": "pantorrilla", "label": "Pantorrilla" }
+  ],
+  "catalog": [
+    { "id": "arete", "file": "programs/arete.json" },
+    { "id": "kettlebell", "file": "programs/kettlebell.json" },
+    { "id": "mediaMaraton1h40", "file": "programs/running/media-maraton-1h40.json", "sport": "running" }
+  ]
+}
