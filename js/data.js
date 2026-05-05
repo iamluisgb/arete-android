@@ -1,0 +1,229 @@
+import { mergeDB } from './utils.js';
+import { stripHeavyFields, splitAndStoreRoutes, clearRunStore, getAllRunRoutes } from './run-store.js';
+
+const STORAGE_KEY = 'arete';
+
+const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
+
+/** Helper: read from localStorage or Capacitor Preferences fallback */
+export async function safeGet(key, fallback = null) {
+  try {
+    if (isCapacitor) {
+      const { Preferences } = await import('@capacitor/preferences');
+      const { value } = await Preferences.get({ key });
+      return value ?? fallback;
+    }
+    return localStorage.getItem(STORAGE_KEY + '.' + key) ?? fallback;
+  } catch (e) {
+    console.warn('safeGet failed:', e);
+    return fallback;
+  }
+}
+
+/** Helper: write to localStorage or Capacitor Preferences fallback */
+export async function safeSet(key, value) {
+  try {
+    const strVal = value === null ? '' : String(value);
+    if (isCapacitor) {
+      const { Preferences } = await import('@capacitor/preferences');
+      await Preferences.set({ key, value: strVal });
+    }
+    localStorage.setItem(STORAGE_KEY + '.' + key, strVal);
+  } catch (e) {
+    console.warn('safeSet failed:', e);
+  }
+}
+
+let _onSave = null;
+let _onQuotaError = null;
+let _onExternalChange = null;
+/** @param {Function} fn - Callback invoked after every saveDB */
+export function setOnSave(fn) { _onSave = fn; }
+/** @param {Function} fn - Callback invoked when localStorage is full */
+export function setOnQuotaError(fn) { _onQuotaError = fn; }
+/** @param {Function} fn - Callback invoked when another tab changes the data */
+export function setOnExternalChange(fn) { _onExternalChange = fn; }
+
+// Detect writes from other tabs
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === SK && _onExternalChange) _onExternalChange();
+  });
+}
+
+const CURRENT_SCHEMA = 4;
+
+const DEFAULTS = { schemaVersion: CURRENT_SCHEMA, program: 'arete', phase: 1, workouts: [], bodyLogs: [], deletedIds: [], customPrograms: [], runningLogs: [], runningProgram: '', runningWeek: 1, runningGoal: { type: 'km', target: 0, enabled: false }, settings: { height: 175, age: 32, race5k: 0, maxHR: 0 } };
+
+/** Schema migrations — each takes a db object and mutates it in place */
+const migrations = [
+  // v1 → v2: ensure all workouts have a program field; ensure settings exists
+  (db) => {
+    for (const w of (db.workouts || [])) {
+      if (!w.program) w.program = db.program || 'arete';
+    }
+    if (!db.settings || typeof db.settings !== 'object') {
+      db.settings = { height: 175, age: 32 };
+    }
+    if (!db.runningLogs) db.runningLogs = [];
+    if (!db.customPrograms) db.customPrograms = [];
+  },
+  // v2 → v3: add race5k to settings for personalized pace zones
+  (db) => {
+    if (!db.settings) db.settings = {};
+    if (!db.settings.race5k) db.settings.race5k = 0;
+  },
+  // v3 → v4: add maxHR to settings for HR zone calculation
+  (db) => {
+    if (!db.settings) db.settings = {};
+    if (!db.settings.maxHR) {
+      db.settings.maxHR = db.settings.age ? 220 - db.settings.age : 0;
+    }
+  },
+];
+
+/** Run pending migrations on a loaded db object */
+export function migrateDB(db) {
+  const from = db.schemaVersion || 1;
+  for (let v = from; v < CURRENT_SCHEMA; v++) {
+    const fn = migrations[v - 1];
+    if (fn) fn(db);
+  }
+  db.schemaVersion = CURRENT_SCHEMA;
+  return db;
+}
+
+/** Load database from localStorage, falling back to defaults */
+export function loadDB() {
+  try {
+    const d = JSON.parse(localStorage.getItem(SK));
+    if (d && d.workouts) {
+      const db = { ...DEFAULTS, ...d };
+      return migrateDB(db);
+    }
+    return { ...DEFAULTS };
+  } catch (e) {
+    console.warn('loadDB: corrupt localStorage data, using defaults', e);
+    return { ...DEFAULTS };
+  }
+}
+
+/** Track a deleted item ID so mergeDB never resurrects it */
+export function markDeleted(db, id) {
+  if (!db.deletedIds) db.deletedIds = [];
+  if (!db.deletedIds.includes(id)) db.deletedIds.push(id);
+}
+
+/** @returns {boolean} true if db has valid minimal structure */
+export function validateDB(db) {
+  return db && typeof db === 'object' && Array.isArray(db.workouts) && Array.isArray(db.bodyLogs);
+}
+
+/** Prune deletedIds that no longer match any live record (max 500) */
+export function pruneDeletedIds(db) {
+  if (!db.deletedIds || db.deletedIds.length <= 500) return;
+  const liveIds = new Set([
+    ...(db.workouts || []).map(w => w.id),
+    ...(db.bodyLogs || []).map(b => b.id),
+    ...(db.runningLogs || []).map(r => r.id),
+  ]);
+  // Keep only IDs that are still referenced or recent (last 200)
+  const recent = db.deletedIds.slice(-200);
+  db.deletedIds = [...new Set([...recent, ...db.deletedIds.filter(id => liveIds.has(id))])];
+}
+
+/** Monotonic revision counter — incremented on every saveDB */
+let _saveRevision = 0;
+export function getSaveRevision() { return _saveRevision; }
+
+/** Persist db to localStorage (validates structure first) */
+export function saveDB(db) {
+  if (!validateDB(db)) { console.error('saveDB: invalid db, aborting save', db); return; }
+  pruneDeletedIds(db);
+  try {
+    // Strip heavy fields (route, splits, hrTimeSeries, etc.) from running logs
+    // to keep localStorage small. Heavy data lives in IndexedDB.
+    const dbForStorage = db.runningLogs?.length
+      ? { ...db, runningLogs: db.runningLogs.map(stripHeavyFields) }
+      : db;
+    localStorage.setItem(SK, JSON.stringify(dbForStorage));
+    _saveRevision++;
+  } catch (e) {
+    console.error('saveDB: storage write failed', e);
+    if (_onQuotaError) _onQuotaError(db);
+    return;
+  }
+  if (_onSave) _onSave(db);
+}
+
+/** Download db as a JSON file (reconstructs full running logs from IDB) */
+export async function exportData(db) {
+  let fullDB = db;
+  if (db.runningLogs?.length) {
+    const routes = await getAllRunRoutes();
+    if (routes.size > 0) {
+      const fullLogs = db.runningLogs.map(l => {
+        const heavy = routes.get(l.id);
+        return heavy ? { ...l, ...heavy } : l;
+      });
+      fullDB = { ...db, runningLogs: fullLogs };
+    }
+  }
+  const b = new Blob([JSON.stringify(fullDB, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(b);
+  a.download = `arete-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/** Validate imported data structure before merging */
+export function validateImportData(d) {
+  if (!d || typeof d !== 'object') return 'Datos inválidos';
+  if (!Array.isArray(d.workouts)) return 'Falta el array de workouts';
+  for (let i = 0; i < d.workouts.length; i++) {
+    const w = d.workouts[i];
+    if (!w || typeof w !== 'object') return `Workout #${i} inválido`;
+    if (w.id == null) return `Workout #${i} sin id`;
+    if (!Array.isArray(w.exercises)) return `Workout #${i} sin exercises[]`;
+  }
+  if (d.bodyLogs && !Array.isArray(d.bodyLogs)) return 'bodyLogs no es un array';
+  if (d.runningLogs && !Array.isArray(d.runningLogs)) return 'runningLogs no es un array';
+  if (d.deletedIds && !Array.isArray(d.deletedIds)) return 'deletedIds no es un array';
+  if (d.customPrograms && !Array.isArray(d.customPrograms)) return 'customPrograms no es un array';
+  return null;
+}
+
+/** Import and merge a JSON backup from a file input event */
+export function importData(event, db, onSuccess) {
+  const f = event.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      const err = validateImportData(d);
+      if (err) { alert(`Formato no válido: ${err}`); return; }
+      Object.assign(db, mergeDB(db, d));
+      // Split heavy route data to IndexedDB before saving
+      splitAndStoreRoutes(db.runningLogs).then(stripped => {
+        db.runningLogs = stripped;
+        saveDB(db);
+        alert('Datos importados');
+        location.reload();
+      });
+    } catch (e) {
+      console.warn('importData failed:', e);
+      alert('Error al leer el archivo');
+    }
+  };
+  r.readAsText(f);
+}
+
+/** Wipe all data after double confirmation */
+export function clearAllData() {
+  if (!confirm('¿Borrar TODOS los datos?')) return;
+  if (!confirm('Última oportunidad. ¿Borrar todo?')) return;
+  localStorage.removeItem(SK);
+  clearRunStore().finally(() => location.reload());
+}

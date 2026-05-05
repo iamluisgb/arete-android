@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="areteBackground">#131313</color>
+    <color name="areteAccent">#d4372c</color>
+    <color name="splashBackground">#131313</color>
+    <color name="colorPrimary">#d4372c</color>
+    <color name="colorPrimaryDark">#131313</color>
+    <color name="colorAccent">#ff5545</color>
+</resources>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Areté</string>
+    <string name="title_activity_main">Areté</string>
+    <string name="package_name">com.arete.app</string>
+    <string name="custom_url_scheme">com.arete.app</string>
+</resources>
