@@ -65,17 +65,61 @@ function ensureAuth() {
       resolve(accessToken);
       return;
     }
-    tokenClient.callback = (response) => {
-      if (response.error) {
-        reject(new Error(response.error_description || response.error));
+
+    // Wait for Google Identity Services to load if not already available
+    function waitForGIS(resolveAuth) {
+      if (typeof google !== 'undefined' && google.accounts) {
+        initDrive();
+        if (tokenClient) {
+          resolveAuth();
+        } else {
+          reject(new Error('Google Identity Services no disponible. Verifica tu conexión a internet.'));
+        }
         return;
       }
-      accessToken = response.access_token;
-      tokenExpiry = Date.now() + (response.expires_in * 1000) - 60000;
-      persistToken();
-      resolve(accessToken);
-    };
-    tokenClient.requestAccessToken();
+      setTimeout(() => waitForGIS(resolveAuth), 100);
+    }
+
+    waitForAuth();
+
+    function waitForAuth() {
+      if (hasValidToken()) {
+        resolve(accessToken);
+        return;
+      }
+      if (typeof google === 'undefined' || !google.accounts) {
+        // GIS not loaded yet — poll for it
+        if (!waitForAuth._timer) {
+          waitForAuth._timer = setInterval(() => {
+            if (typeof google !== 'undefined' && google.accounts) {
+              clearInterval(waitForAuth._timer);
+              waitForAuth._timer = null;
+              waitForAuth();
+            }
+          }, 200);
+        }
+        return;
+      }
+      // GIS is loaded — init token client
+      if (!tokenClient) {
+        initDrive();
+      }
+      if (!tokenClient) {
+        reject(new Error('Google Identity Services no disponible. Verifica tu conexión a internet.'));
+        return;
+      }
+      tokenClient.callback = (response) => {
+        if (response.error) {
+          reject(new Error(response.error_description || response.error));
+          return;
+        }
+        accessToken = response.access_token;
+        tokenExpiry = Date.now() + (response.expires_in * 1000) - 60000;
+        persistToken();
+        resolve(accessToken);
+      };
+      tokenClient.requestAccessToken();
+    }
   });
 }
 
