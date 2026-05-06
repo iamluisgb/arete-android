@@ -10,7 +10,8 @@ import { initTraining, populateSessions, startEdit, cancelEdit } from './ui/trai
 import { initCalendar } from './ui/calendar.js';
 import { initHistory } from './ui/history.js';
 import { initBody } from './ui/body.js';
-import { silentBackup, syncOnLoad, onSyncStatus, isSyncing, clearStoredToken } from './drive.js';
+import { silentBackup, syncOnLoad, onSyncStatus, isSyncing } from './drive.js';
+import { clearStoredToken } from './auth/google.js';
 import { initDriveUI } from './ui/drive-ui.js';
 import { initToast, toast } from './ui/toast.js';
 import { initRunning } from './ui/running.js';
