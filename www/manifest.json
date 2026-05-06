@@ -2,7 +2,7 @@
   "name": "Areté",
   "short_name": "Areté",
   "description": "Tu tracker de fuerza personal",
-  "start_url": "./app.html",
+  "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "background_color": "#f4f2f0",

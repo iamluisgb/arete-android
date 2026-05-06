@@ -859,3 +859,20 @@ body{padding-bottom:max(84px,calc(76px + var(--safe-area-bottom)))}
 nav{padding-bottom:max(8px,var(--safe-area-bottom));padding-top:max(8px,var(--safe-area-top))}
 header{padding-top:max(12px,calc(12px + var(--safe-area-top)))}
 input[type="number"],input[type="text"],input[type="date"],textarea,select{font-size:16px!important}
+
+/* === Mobile responsive (Pixel 7 / mobile first) === */
+@media(max-width:480px){
+  body{padding-bottom:88px}
+  nav{border-radius:0;padding:6px 2px 0;padding-bottom:max(6px,env(safe-area-inset-bottom))}
+  nav button{padding:4px 2px 2px;font-size:var(--fs-xs);gap:1px}
+  nav button .material-symbols-outlined{font-size:20px}
+  header{padding:10px 14px}
+  header h1{font-size:var(--fs-lg)}
+  .section{padding:12px 14px}
+  .bento-grid{grid-template-columns:1fr 1fr!important;gap:10px!important}
+  .bento-card{padding:14px!important}
+  .bento-card h3{font-size:var(--fs-xs)!important}
+  .bento-card .value{font-size:var(--fs-lg)!important}
+  .quick-actions{flex-direction:column!important;gap:10px!important}
+  .quick-actions button{padding:14px!important;font-size:var(--fs-lg)!important}
+}

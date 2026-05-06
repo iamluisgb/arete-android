@@ -141,15 +141,8 @@ export function updatePhaseUI(db) {
 
 /** Initialize navigation: tab switching, strength sub-tabs, and phase modal */
 export function initNav(db) {
-  console.log('[initNav] Checking for nav buttons...');
-  const buttons = document.querySelectorAll('nav button[data-sec]');
-  console.log('[initNav] Found', buttons.length, 'buttons');
-  buttons.forEach(btn => {
-    console.log('[initNav] Adding click listener to', btn.dataset.sec);
-    btn.addEventListener('click', (e) => {
-      console.log('[initNav] Clicked', btn.dataset.sec);
-      switchTab(btn, db);
-    });
+  document.querySelectorAll('nav button[data-sec]').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn, db));
   });
   // Strength sub-tabs
   document.querySelectorAll('.str-tab[data-str]').forEach(btn => {

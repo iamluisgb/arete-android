@@ -4,7 +4,12 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "sync": "npx cap sync android",
+    "open:android": "npx cap open android",
+    "build:android:debug": "npm run sync && cd android && ./gradlew assembleDebug",
+    "build:android:release": "npm run sync && cd android && ./gradlew bundleRelease",
+    "clean:android": "cd android && ./gradlew clean"
   },
   "repository": {
     "type": "git",

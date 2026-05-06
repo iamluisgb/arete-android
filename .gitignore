@@ -1,4 +1,9 @@
 PLAN-9-10.md
 PLAN-EVOLUCION.md
 node_modules/
+*.keystore
+*.jks
+keystore.properties
+local.properties
+google-services.json
 stitch/
