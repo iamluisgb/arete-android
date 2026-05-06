@@ -1,5 +1,3 @@
-import { GoogleSignIn } from '@capawesome/capacitor-google-sign-in';
-
 const CLIENT_ID = '146475241021-2sschmrutnqdeug5fo6onc772im94ltt.apps.googleusercontent.com';
 const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 
@@ -35,14 +33,16 @@ export async function initAuth() {
   if (_initialized) return;
   restoreToken();
   try {
+    // Dynamic import — only works in Capacitor native
+    const { GoogleSignIn } = await import('@capawesome/capacitor-google-sign-in');
     await GoogleSignIn.initialize({
       clientId: CLIENT_ID,
       scopes: [SCOPE],
     });
     _initialized = true;
   } catch (e) {
-    console.warn('Google Sign-In init failed:', e);
-    throw e;
+    // Not in Capacitor — nothing to do
+    console.warn('Google Sign-In not available (not in Capacitor):', e.message);
   }
 }
 
@@ -55,10 +55,10 @@ export async function getAuthToken() {
     return _accessToken;
   }
   try {
+    const { GoogleSignIn } = await import('@capawesome/capacitor-google-sign-in');
     const result = await GoogleSignIn.signIn();
     if (result.accessToken) {
       _accessToken = result.accessToken;
-      // Token expires in 1 hour (3600000ms) minus buffer
       _tokenExpiry = Date.now() + 3540000;
       persistToken();
       return _accessToken;
