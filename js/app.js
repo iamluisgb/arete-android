@@ -3,18 +3,19 @@ import { splitAndStoreRoutes } from './run-store.js';
 import { loadPrograms, setActiveProgram, getActiveProgram, getPrograms, getProgramList, isBuiltinProgram, validateProgram, importCustomProgram, deleteCustomProgram, getCustomPrograms } from './programs.js';
 import { formatPace, parseRunDuration, formatRunDuration, getPaceZones, getHRZones, ZONE_COLORS } from './ui/running-helpers.js';
 import { today, mergeDB, esc, trapFocus } from './utils.js';
-import { DEBOUNCE_BACKUP_MS, GIS_CHECK_INTERVAL_MS, GIS_CHECK_TIMEOUT_MS, SYNC_INDICATOR_MS, DEFAULT_HEIGHT, DEFAULT_AGE, LOCALE, REVISION_PREVIEW_LIMIT, APP_VERSION } from './constants.js';
+import { DEBOUNCE_BACKUP_MS, SYNC_INDICATOR_MS, DEFAULT_HEIGHT, DEFAULT_AGE, LOCALE, REVISION_PREVIEW_LIMIT, APP_VERSION } from './constants.js';
 import { initTimer } from './ui/timer.js';
 import { initNav, switchTab, switchStrTab, updatePhaseUI, updatePhaseDisplay, refreshActiveSection, restoreLastTab } from './ui/nav.js';
 import { initTraining, populateSessions, startEdit, cancelEdit } from './ui/training.js';
 import { initCalendar } from './ui/calendar.js';
 import { initHistory } from './ui/history.js';
 import { initBody } from './ui/body.js';
-import { initDrive, silentBackup, syncOnLoad, onSyncStatus, isSyncing, clearStoredToken } from './drive.js';
+import { silentBackup, syncOnLoad, onSyncStatus, isSyncing, clearStoredToken } from './drive.js';
 import { initDriveUI } from './ui/drive-ui.js';
 import { initToast, toast } from './ui/toast.js';
 import { initRunning } from './ui/running.js';
 import { renderDashboard } from './ui/dashboard.js';
+import { initAuth } from './auth/google.js';
 
 // === Capacitor runtime detection ===
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
@@ -287,22 +288,13 @@ async function init() {
 
   updateSyncUI();
 
-  // Initialize Google Drive when GIS library is ready
-  const startDrive = () => {
-    initDrive();
-    if (isAutoSync()) syncOnLoad(db, saveDB);
-  };
-  if (typeof google !== 'undefined' && google.accounts) {
-    startDrive();
-  } else {
-    const checkGIS = setInterval(() => {
-      if (typeof google !== 'undefined' && google.accounts) {
-        clearInterval(checkGIS);
-        startDrive();
-      }
-    }, GIS_CHECK_INTERVAL_MS);
-    setTimeout(() => clearInterval(checkGIS), GIS_CHECK_TIMEOUT_MS);
+  // Initialize Google auth (native on Capacitor, GIS on web)
+  try {
+    await initAuth();
+  } catch (e) {
+    console.warn('Auth init failed:', e);
   }
+  if (isAutoSync()) syncOnLoad(db, saveDB);
 
   // Flush pending backup when leaving, re-sync when returning
   document.addEventListener('visibilitychange', () => {

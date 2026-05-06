@@ -1,126 +1,20 @@
 import { mergeDB } from './utils.js';
 import { getAllRunRoutes, splitAndStoreRoutes } from './run-store.js';
+import { getAuthToken, clearStoredToken, hasValidToken } from './auth/google.js';
 
-// Google Drive backup/restore via GIS implicit flow + REST API
+// Google Drive backup/restore via REST API
+// Auth is handled by native Google Sign-In (Capacitor) or GIS (web)
 
-const CLIENT_ID = '146475241021-2sschmrutnqdeug5fo6onc772im94ltt.apps.googleusercontent.com';
-const SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
 const BACKUP_FILENAME = 'arete-backup.json';
 
-let tokenClient = null;
-let accessToken = null;
-let tokenExpiry = 0;
+const SYNC_TS_KEY = 'areteLastSync';
 
-const TOKEN_KEY = 'areteToken';
-const EXPIRY_KEY = 'areteTokenExpiry';
-
-function persistToken() {
-  try {
-    localStorage.setItem(TOKEN_KEY, accessToken);
-    localStorage.setItem(EXPIRY_KEY, tokenExpiry.toString());
-  } catch (e) { console.warn('persistToken: localStorage unavailable', e); }
+function getLocalSyncTime() {
+  return parseInt(localStorage.getItem(SYNC_TS_KEY)) || 0;
 }
 
-/** Remove stored OAuth token from memory and localStorage */
-export function clearStoredToken() {
-  accessToken = null;
-  tokenExpiry = 0;
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(EXPIRY_KEY);
-}
-
-function restoreToken() {
-  const t = localStorage.getItem(TOKEN_KEY);
-  const e = parseInt(localStorage.getItem(EXPIRY_KEY)) || 0;
-  if (t && Date.now() < e) {
-    accessToken = t;
-    tokenExpiry = e;
-  } else {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(EXPIRY_KEY);
-  }
-}
-
-/** Initialize Google Identity Services token client */
-export function initDrive() {
-  restoreToken();
-  if (typeof google === 'undefined' || !google.accounts) {
-    console.warn('initDrive: Google Identity Services not loaded yet');
-    return;
-  }
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPE,
-    callback: () => {},
-  });
-}
-
-export function hasValidToken() {
-  return accessToken && Date.now() < tokenExpiry;
-}
-
-function ensureAuth() {
-  return new Promise((resolve, reject) => {
-    if (hasValidToken()) {
-      resolve(accessToken);
-      return;
-    }
-
-    // Wait for Google Identity Services to load if not already available
-    function waitForGIS(resolveAuth) {
-      if (typeof google !== 'undefined' && google.accounts) {
-        initDrive();
-        if (tokenClient) {
-          resolveAuth();
-        } else {
-          reject(new Error('Google Identity Services no disponible. Verifica tu conexión a internet.'));
-        }
-        return;
-      }
-      setTimeout(() => waitForGIS(resolveAuth), 100);
-    }
-
-    waitForAuth();
-
-    function waitForAuth() {
-      if (hasValidToken()) {
-        resolve(accessToken);
-        return;
-      }
-      if (typeof google === 'undefined' || !google.accounts) {
-        // GIS not loaded yet — poll for it
-        if (!waitForAuth._timer) {
-          waitForAuth._timer = setInterval(() => {
-            if (typeof google !== 'undefined' && google.accounts) {
-              clearInterval(waitForAuth._timer);
-              waitForAuth._timer = null;
-              waitForAuth();
-            }
-          }, 200);
-        }
-        return;
-      }
-      // GIS is loaded — init token client
-      if (!tokenClient) {
-        initDrive();
-      }
-      if (!tokenClient) {
-        reject(new Error('Google Identity Services no disponible. Verifica tu conexión a internet.'));
-        return;
-      }
-      tokenClient.callback = (response) => {
-        if (response.error) {
-          reject(new Error(response.error_description || response.error));
-          return;
-        }
-        accessToken = response.access_token;
-        tokenExpiry = Date.now() + (response.expires_in * 1000) - 60000;
-        persistToken();
-        resolve(accessToken);
-      };
-      tokenClient.requestAccessToken();
-    }
-  });
+function setLocalSyncTime() {
+  localStorage.setItem(SYNC_TS_KEY, Date.now().toString());
 }
 
 async function driveFetch(res, context) {
@@ -189,7 +83,7 @@ async function downloadFile(token, fileId) {
 
 /** Upload db to Google Drive appData folder (reconstructs full running logs from IDB) */
 export async function backupToDrive(db) {
-  const token = await ensureAuth();
+  const token = await getAuthToken();
   // Reconstruct full running logs with heavy fields from IndexedDB
   let fullDB = db;
   if (db.runningLogs?.length) {
@@ -210,7 +104,7 @@ export async function backupToDrive(db) {
 
 /** Download and parse backup from Drive */
 export async function restoreFromDrive() {
-  const token = await ensureAuth();
+  const token = await getAuthToken();
   const file = await findBackupFile(token);
   if (!file) return { success: false, reason: 'no_backup' };
   const content = await downloadFile(token, file.id);
@@ -224,7 +118,7 @@ export async function restoreFromDrive() {
 
 /** List all Drive file revisions for version recovery */
 export async function listRevisions() {
-  const token = await ensureAuth();
+  const token = await getAuthToken();
   const file = await findBackupFile(token);
   if (!file) return { success: false, reason: 'no_backup' };
   const res = await fetch(
@@ -238,7 +132,7 @@ export async function listRevisions() {
 
 /** Download and parse a specific Drive file revision */
 export async function downloadRevision(fileId, revisionId) {
-  const token = await ensureAuth();
+  const token = await getAuthToken();
   const res = await fetch(
     `https://www.googleapis.com/drive/v3/files/${fileId}/revisions/${revisionId}?alt=media`,
     { headers: { 'Authorization': `Bearer ${token}` } }
