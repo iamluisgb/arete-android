@@ -1,0 +1,21 @@
+{
+  "appId": "com.arete.app",
+  "appName": "Areté",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "backgroundColor": "#131313",
+      "launchShowDuration": 1500,
+      "launchAutoHide": true
+    },
+    "GoogleAuth": {
+      "scopes": ["profile", "email"]
+    },
+    "Geolocation": {
+      "showPermissionsPrompt": false
+    }
+  }
+}
