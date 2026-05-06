@@ -24,6 +24,9 @@
   "homepage": "https://github.com/iamluisgb/arete#readme",
   "description": "",
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/status-bar": "^8.0.2",
+    "graceful-fs": "^4.2.11",
     "jsdom": "^26.1.0",
     "vitest": "^3.2.4"
   },
@@ -41,7 +44,6 @@
     "@capacitor/screen-orientation": "^8.0.1",
     "@capacitor/share": "^8.0.1",
     "@capacitor/splash-screen": "^8.0.1",
-    "@capacitor/status-bar": "^8.0.2",
     "@capawesome/capacitor-google-sign-in": "^0.1.2"
   }
 }

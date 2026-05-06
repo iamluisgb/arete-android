@@ -68,6 +68,12 @@ async function init() {
     document.documentElement.classList.toggle('dark', isDark);
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = isDark ? '#131313' : '#f4f2f0';
+    if (isCapacitor) {
+      import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
+        StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(() => {});
+        StatusBar.setOverlaysWebView({ overlay: true }).catch(() => {});
+      }).catch(() => {});
+    }
   }
 
   function initTheme() {

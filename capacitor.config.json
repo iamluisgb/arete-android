@@ -16,6 +16,11 @@
     },
     "Geolocation": {
       "showPermissionsPrompt": false
+    },
+    "StatusBar": {
+      "overlaysWebView": true,
+      "style": "DEFAULT",
+      "backgroundColor": "#00000000"
     }
   }
 }
