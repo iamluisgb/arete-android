@@ -144,16 +144,6 @@ export async function downloadRevision(fileId, revisionId) {
 
 // === Auto-sync ===
 
-const SYNC_TS_KEY = 'areteLastSync';
-
-function getLocalSyncTime() {
-  return parseInt(localStorage.getItem(SYNC_TS_KEY)) || 0;
-}
-
-function setLocalSyncTime() {
-  localStorage.setItem(SYNC_TS_KEY, Date.now().toString());
-}
-
 let _syncing = false;
 export function isSyncing() { return _syncing; }
 
