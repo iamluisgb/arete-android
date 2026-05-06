@@ -335,11 +335,16 @@ export class GpsTracker {
       if (document.visibilityState === 'hidden') {
         // Activate SW notification + GPS heartbeat (same pattern as timer)
         this._swPost({ type: 'run-start-live', startedAt: this._runStartWallTime, distance: this.distance * 1000 });
+        // Switch to native GPS for background tracking
+        if (isCapacitor && this._watchId !== null) {
+          this._stopGps();
+          this._startGpsBackground();
+        }
       } else {
-        // Back to foreground: clear SW notification, re-sync GPS
-        this._swPost({ type: 'run-clear' });
-        if (this._wakeLockEnabled) this._acquireWakeLock();
-        this._stopGps();
+        // Back to foreground: restore main GPS
+        if (isCapacitor) {
+          this._stopGps();
+        }
         this._startGps();
         navigator.geolocation.getCurrentPosition(
           pos => this._onPosition(pos),
@@ -437,8 +442,28 @@ export class GpsTracker {
         };
         this._onError?.(msgs[err.code] || 'Error GPS');
       },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
+  }
+
+  _startGpsBackground() {
+    // For background tracking (screen locked): use PRIORITY_HIGH_ACCURACY via Capacitor
+    if (isCapacitor) {
+      import('@capacitor/geolocation').then(({ Geolocation }) => {
+        Geolocation.watchPosition({
+          enableHighAccuracy: true,
+          maximumAge: 3000,
+          timeout: 10000,
+          maximumUpdates: 999999,
+        }, (status, err) => {
+          if (!status || err) return;
+          Geolocation.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 10000,
+          }).then(pos => this._onPosition(pos));
+        });
+      });
+    }
   }
 
   _stopGps() {
