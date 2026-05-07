@@ -29,9 +29,10 @@ export class GpsTracker {
     this._totalPaused = 0;
     this._timerRaf = null;
     this._timerInterval = null;
-    this._bgPollInterval = null;   // background GPS polling fallback (main thread)
-    this._bgWorker = null;         // Web Worker for background timer (less throttled)
     this._lastGpsTime = 0;         // timestamp of last GPS callback
+    this._areteLocation = null;    // Capacitor native plugin reference
+    this._areteLocationListener = null;
+    this._bgActive = false;        // is the native foreground service running?
     this._wakeLock = null;
     this._wakeLockEnabled = false; // opt-in: user toggles this
     this._visibilityHandler = null;
@@ -118,7 +119,6 @@ export class GpsTracker {
     this._runStartWallTime = Date.now();
     this._startGps();
     this._startTimer();
-    this._startBgPoll();
     this._bindVisibility();
     this._bindSwMessages();
     // Auto-enable wake lock on start (user can toggle off)
@@ -140,8 +140,8 @@ export class GpsTracker {
     this.state = 'paused';
     this._pauseStart = performance.now();
     this._stopGps();
+    this._stopGpsBackground();
     this._stopTimer();
-    this._stopBgPoll();
     this._swPost({ type: 'run-clear' });
   }
 
@@ -151,10 +151,11 @@ export class GpsTracker {
     this._totalPaused += performance.now() - this._pauseStart;
     this._startGps();
     this._startTimer();
-    this._startBgPoll();
-    // If resuming while in background, re-activate SW notification
+    // If resuming while in background, re-activate SW notification + native service
     if (document.visibilityState === 'hidden') {
       this._swPost({ type: 'run-start-live', startedAt: this._runStartWallTime, distance: this.distance * 1000 });
+      this._stopGps();
+      this._startGpsBackground();
     }
   }
 
@@ -168,8 +169,8 @@ export class GpsTracker {
     }
 
     this._stopGps();
+    this._stopGpsBackground();
     this._stopTimer();
-    this._stopBgPoll();
     this._releaseWakeLock();
     this._unbindVisibility();
     this._unbindSwMessages();
@@ -261,9 +262,10 @@ export class GpsTracker {
     // If was tracking, resume GPS + timer
     if (this.state === 'tracking') {
       this._updateElapsed();
+      // Try to recover any GPS points the native service buffered while we were dead
+      this.resyncFromService().catch(() => {});
       this._startGps();
       this._startTimer();
-      this._startBgPoll();
       this._bindVisibility();
       this._bindSwMessages();
       if (this._wakeLockEnabled) this._acquireWakeLock();
@@ -333,17 +335,17 @@ export class GpsTracker {
     this._visibilityHandler = () => {
       if (this.state !== 'tracking') return;
       if (document.visibilityState === 'hidden') {
-        // Activate SW notification + GPS heartbeat (same pattern as timer)
+        // Activate SW notification (visual feedback) + native foreground service
         this._swPost({ type: 'run-start-live', startedAt: this._runStartWallTime, distance: this.distance * 1000 });
-        // Switch to native GPS for background tracking
-        if (isCapacitor && this._watchId !== null) {
+        if (isCapacitor) {
           this._stopGps();
           this._startGpsBackground();
         }
       } else {
-        // Back to foreground: restore main GPS
-        if (isCapacitor) {
-          this._stopGps();
+        // Back to foreground: stop native service, drain its buffer, restart browser GPS
+        if (isCapacitor && this._bgActive) {
+          this.resyncFromService().catch(() => {});
+          this._stopGpsBackground();
         }
         this._startGps();
         navigator.geolocation.getCurrentPosition(
@@ -387,48 +389,6 @@ export class GpsTracker {
     }
   }
 
-  // ── Background GPS polling ─────────────────────────────
-  // Primary: Web Worker timer (less throttled when screen is locked).
-  // Fallback: main-thread setInterval (in case Worker is unavailable).
-
-  _bgPollTick() {
-    if (this.state !== 'tracking') return;
-    if (Date.now() - this._lastGpsTime > 4000) {
-      navigator.geolocation.getCurrentPosition(
-        pos => this._onPosition(pos),
-        () => {},
-        { enableHighAccuracy: true, maximumAge: 3000, timeout: 5000 }
-      );
-    }
-  }
-
-  _startBgPoll() {
-    this._stopBgPoll();
-
-    // Primary: Web Worker (timers are less throttled in background)
-    if (typeof Worker !== 'undefined') {
-      try {
-        this._bgWorker = new Worker('js/bg-worker.js');
-        this._bgWorker.onmessage = () => this._bgPollTick();
-        this._bgWorker.postMessage('start');
-      } catch (e) { /* Worker failed, fall through to setInterval */ }
-    }
-
-    // Fallback: main-thread interval
-    this._bgPollInterval = setInterval(() => this._bgPollTick(), 5000);
-  }
-
-  _stopBgPoll() {
-    if (this._bgWorker) {
-      try { this._bgWorker.postMessage('stop'); this._bgWorker.terminate(); } catch (e) {}
-      this._bgWorker = null;
-    }
-    if (this._bgPollInterval) {
-      clearInterval(this._bgPollInterval);
-      this._bgPollInterval = null;
-    }
-  }
-
   // ── GPS watcher ─────────────────────────────────────────
 
   _startGps() {
@@ -446,23 +406,96 @@ export class GpsTracker {
     );
   }
 
-  _startGpsBackground() {
-    // For background tracking (screen locked): use PRIORITY_HIGH_ACCURACY via Capacitor
-    if (isCapacitor) {
-      import('@capacitor/geolocation').then(({ Geolocation }) => {
-        Geolocation.watchPosition({
-          enableHighAccuracy: true,
-          maximumAge: 3000,
-          timeout: 10000,
-          maximumUpdates: 999999,
-        }, (status, err) => {
-          if (!status || err) return;
-          Geolocation.getCurrentPosition({
-            enableHighAccuracy: true,
-            timeout: 10000,
-          }).then(pos => this._onPosition(pos));
+  // Native foreground service for background tracking. Uses
+  // FusedLocationProviderClient on a partial wake lock, with its own
+  // notification — survives Doze and screen-off because it lives outside the
+  // WebView. Locations buffered on disk are drained on resume.
+  async _startGpsBackground() {
+    if (!isCapacitor) return;
+    if (this._bgActive) return;
+    try {
+      const plugin = await this._getNativePlugin();
+      if (!plugin) return;
+      // Drop any leftover buffer from a previous session
+      try { await plugin.clearBuffer(); } catch (e) {}
+      this._areteLocationListener = await plugin.addListener('locationUpdate', (pos) => {
+        this._onPosition({
+          coords: {
+            latitude: pos.lat,
+            longitude: pos.lng,
+            accuracy: pos.accuracy,
+            speed: pos.speed,
+            heading: pos.heading,
+            altitude: pos.altitude,
+          },
+          timestamp: pos.timestamp,
         });
       });
+      await plugin.start();
+      this._bgActive = true;
+    } catch (e) {
+      this._onError?.('No se pudo iniciar GPS en segundo plano');
+    }
+  }
+
+  async _stopGpsBackground() {
+    if (!isCapacitor) return;
+    if (this._areteLocationListener) {
+      try { await this._areteLocationListener.remove(); } catch (e) {}
+      this._areteLocationListener = null;
+    }
+    if (this._bgActive) {
+      try {
+        const plugin = await this._getNativePlugin();
+        if (plugin) await plugin.stop();
+      } catch (e) {}
+      this._bgActive = false;
+    }
+  }
+
+  // Drain any GPS points the native service buffered while the WebView was
+  // suspended (screen lock for >5min, app killed, etc.). Replays them through
+  // _onPosition so distance/splits stay consistent.
+  async resyncFromService() {
+    if (!isCapacitor) return 0;
+    try {
+      const plugin = await this._getNativePlugin();
+      if (!plugin) return 0;
+      const result = await plugin.getBufferedLocations();
+      const list = result?.locations || [];
+      // Skip points older than the last one we already processed
+      const since = this._lastGpsTime || 0;
+      let applied = 0;
+      for (const pos of list) {
+        if (pos.timestamp <= since) continue;
+        this._onPosition({
+          coords: {
+            latitude: pos.lat,
+            longitude: pos.lng,
+            accuracy: pos.accuracy,
+            speed: pos.speed,
+            heading: pos.heading,
+            altitude: pos.altitude,
+          },
+          timestamp: pos.timestamp,
+        });
+        applied++;
+      }
+      await plugin.clearBuffer();
+      return applied;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  async _getNativePlugin() {
+    if (this._areteLocation) return this._areteLocation;
+    try {
+      const { registerPlugin } = await import('@capacitor/core');
+      this._areteLocation = registerPlugin('AreteLocation');
+      return this._areteLocation;
+    } catch (e) {
+      return null;
     }
   }
 

@@ -16,13 +16,13 @@ import { populateRunWeeks as _populateRunWeeks, populateRunSessions as _populate
 // Capacitor runtime detection
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
 
-// Expose resume handler for app lifecycle
+// Expose resume handler for app lifecycle. When the app comes back to the
+// foreground while a run is in progress, drain any GPS points the native
+// service buffered while the WebView was suspended.
 window.__areteResumeForeground = async () => {
   try {
-    const snap = localStorage.getItem(RUN_SAVE_KEY);
-    if (snap) {
-      const data = JSON.parse(snap);
-      console.log('Restoring run state from background', data);
+    if (tracker.state === 'tracking') {
+      await tracker.resyncFromService();
     }
   } catch (e) { /* ignore */ }
 };

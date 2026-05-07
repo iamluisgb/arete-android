@@ -11,6 +11,9 @@
 -keep class com.google.android.datatransport.** { *; }
 -dontwarn com.google.android.gms.**
 
+# Areté custom plugin & service
+-keep class com.arete.app.location.** { *; }
+
 # Keep stack traces for debugging
 -keepattributes SourceFile,LineNumberTable
 -keepattributes *Annotation*

@@ -25,11 +25,7 @@ window.__IS_CAPACITOR = isCapacitor;
 if (isCapacitor) {
   import('@capacitor/app').then(({ App }) => {
     App.addListener('appState', async ({ isActive }) => {
-      if (!isActive) {
-        window.__aretePauseBackground?.();
-      } else {
-        window.__areteResumeForeground?.();
-      }
+      if (isActive) window.__areteResumeForeground?.();
     });
   });
 
