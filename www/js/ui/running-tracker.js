@@ -40,7 +40,7 @@ export class GpsTracker {
     this._runStartWallTime = 0; // Date.now() at start, for SW notification
 
     // Auto-pause
-    this._autoPauseEnabled = true;  // on by default
+    this._autoPauseEnabled = true;
     this._autoPaused = false;
     this._autoPauseStart = 0;       // performance.now() when auto-paused
     this._totalAutoPaused = 0;      // ms accumulated in auto-pause
@@ -118,6 +118,11 @@ export class GpsTracker {
 
     this._runStartWallTime = Date.now();
     this._startGps();
+    // Start the native foreground service NOW while the app is in foreground.
+    // Android 14+ blocks `foregroundServiceType=location` from being launched
+    // once the app is backgrounded — even with permission granted. Starting it
+    // here keeps it alive across screen-off / Doze.
+    this._startGpsBackground();
     this._startTimer();
     this._bindVisibility();
     this._bindSwMessages();
@@ -150,12 +155,15 @@ export class GpsTracker {
     this.state = 'tracking';
     this._totalPaused += performance.now() - this._pauseStart;
     this._startGps();
+    // Re-arm the native FGS. If we're in background when resume is triggered,
+    // this would normally fail on Android 14+, but Capacitor briefly grants
+    // the activity-visibility grace period when the user taps the resume
+    // button, so it's safe here.
+    this._startGpsBackground();
     this._startTimer();
-    // If resuming while in background, re-activate SW notification + native service
     if (document.visibilityState === 'hidden') {
       this._swPost({ type: 'run-start-live', startedAt: this._runStartWallTime, distance: this.distance * 1000 });
       this._stopGps();
-      this._startGpsBackground();
     }
   }
 
@@ -265,6 +273,7 @@ export class GpsTracker {
       // Try to recover any GPS points the native service buffered while we were dead
       this.resyncFromService().catch(() => {});
       this._startGps();
+      this._startGpsBackground();
       this._startTimer();
       this._bindVisibility();
       this._bindSwMessages();
@@ -336,17 +345,15 @@ export class GpsTracker {
     this._visibilityHandler = () => {
       if (this.state !== 'tracking') return;
       if (document.visibilityState === 'hidden') {
-        // Activate SW notification (visual feedback) + native foreground service
+        // Native FGS keeps running; just stop the WebView watcher to avoid
+        // duplicate points and let the service feed us via locationUpdate events.
         this._swPost({ type: 'run-start-live', startedAt: this._runStartWallTime, distance: this.distance * 1000 });
-        if (isCapacitor) {
-          this._stopGps();
-          this._startGpsBackground();
-        }
+        if (isCapacitor) this._stopGps();
       } else {
-        // Back to foreground: stop native service, drain its buffer, restart browser GPS
-        if (isCapacitor && this._bgActive) {
+        // Back to foreground: drain anything the service buffered while we
+        // were suspended, then resume the lighter WebView watcher.
+        if (isCapacitor) {
           this.resyncFromService().catch(() => {});
-          this._stopGpsBackground();
         }
         this._startGps();
         navigator.geolocation.getCurrentPosition(
@@ -538,7 +545,6 @@ export class GpsTracker {
           this._autoPauseAt();
         }
         if (this._autoPaused) {
-          // Still paused — just emit update with autoPaused flag, don't accumulate distance
           this._updateElapsed();
           this._onUpdate?.({
             elapsed: this.elapsed, distance: this.distance,
