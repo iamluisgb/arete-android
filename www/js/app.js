@@ -23,22 +23,21 @@ const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativeP
 window.__IS_CAPACITOR = isCapacitor;
 
 if (isCapacitor) {
-  import('@capacitor/app').then(({ App }) => {
-    App.addListener('appState', async ({ isActive }) => {
+  const Plugins = window.Capacitor?.Plugins || {};
+  if (Plugins.App) {
+    Plugins.App.addListener('appStateChange', async ({ isActive }) => {
       if (isActive) window.__areteResumeForeground?.();
     });
-  });
+  }
 
-  import('@capacitor/network').then(({ Network }) => {
-    Network.addListener('networkChange', (status) => {
+  if (Plugins.Network) {
+    Plugins.Network.addListener('networkStatusChange', (status) => {
       const banner = document.getElementById('offlineBanner');
       if (banner) banner.style.display = status.connected ? 'none' : 'flex';
     });
-  });
+  }
 
-  import('@capacitor/splash-screen').then(({ SplashScreen }) => {
-    SplashScreen.hide();
-  });
+  if (Plugins.SplashScreen) Plugins.SplashScreen.hide();
 }
 
 // === Google Drive: inject GIS script for Capacitor ===
@@ -65,10 +64,11 @@ async function init() {
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.content = isDark ? '#131313' : '#f4f2f0';
     if (isCapacitor) {
-      import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
-        StatusBar.setStyle({ style: isDark ? Style.Dark : Style.Light }).catch(() => {});
-        StatusBar.setOverlaysWebView({ overlay: true }).catch(() => {});
-      }).catch(() => {});
+      const SB = window.Capacitor?.Plugins?.StatusBar;
+      if (SB) {
+        SB.setStyle({ style: isDark ? 'DARK' : 'LIGHT' }).catch(() => {});
+        SB.setOverlaysWebView({ overlay: true }).catch(() => {});
+      }
     }
   }
 

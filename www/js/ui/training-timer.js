@@ -11,10 +11,7 @@ let wakeLock = null;
 
 async function requestWakeLock() {
   if (isCapacitor) {
-    try {
-      const { App } = await import('@capacitor/app');
-      await App.keepAwake();
-    } catch (e) { }
+    try { await window.Capacitor?.Plugins?.App?.keepAwake?.(); } catch (e) {}
   } else {
     try {
       if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
@@ -24,7 +21,7 @@ async function requestWakeLock() {
 
 function releaseWakeLock() {
   if (isCapacitor) {
-    import('@capacitor/app').then(({ App }) => App.resumeForeground().catch(() => {}));
+    window.Capacitor?.Plugins?.App?.resumeForeground?.().catch(() => {});
   } else if (wakeLock) {
     wakeLock.release().catch(() => {});
     wakeLock = null;

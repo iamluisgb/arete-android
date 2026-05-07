@@ -24,9 +24,7 @@ export function beep(freq = 880, ms = 200) {
 export function vibrate(pattern) {
   try {
     if (isCapacitor) {
-      import('@capacitor/haptics').then(({ Haptics }) => {
-        Haptics.vibrate();
-      });
+      window.Capacitor?.Plugins?.Haptics?.vibrate?.();
     }
     navigator.vibrate?.(pattern);
   } catch (e) { /* silent fail */ }

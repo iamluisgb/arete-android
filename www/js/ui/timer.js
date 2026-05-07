@@ -25,10 +25,11 @@ function getRemaining() {
 function swPost(msg) {
   if (isCapacitor) {
     if (msg.type === 'timer-alarm') {
-      import('@capacitor/haptics').then(({ Haptics }) => {
+      const Haptics = window.Capacitor?.Plugins?.Haptics;
+      if (Haptics) {
         Haptics.notificationFeedback({ type: 'success' });
         Haptics.impactFeedback({ style: 'heavy' });
-      });
+      }
     }
     return;
   }

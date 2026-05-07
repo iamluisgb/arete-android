@@ -8,8 +8,8 @@ const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativeP
 /** Helper: read from localStorage or Capacitor Preferences fallback */
 export async function safeGet(key, fallback = null) {
   try {
-    if (isCapacitor) {
-      const { Preferences } = await import('@capacitor/preferences');
+    const Preferences = isCapacitor ? window.Capacitor?.Plugins?.Preferences : null;
+    if (Preferences) {
       const { value } = await Preferences.get({ key });
       return value ?? fallback;
     }
@@ -24,8 +24,8 @@ export async function safeGet(key, fallback = null) {
 export async function safeSet(key, value) {
   try {
     const strVal = value === null ? '' : String(value);
-    if (isCapacitor) {
-      const { Preferences } = await import('@capacitor/preferences');
+    const Preferences = isCapacitor ? window.Capacitor?.Plugins?.Preferences : null;
+    if (Preferences) {
       await Preferences.set({ key, value: strVal });
     }
     localStorage.setItem(STORAGE_KEY + '.' + key, strVal);

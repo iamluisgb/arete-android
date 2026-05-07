@@ -973,8 +973,10 @@ async function exportImage() {
     } else if (isCapacitor) {
       // Capacitor native share via Filesystem + Share
       try {
-        const { Filesystem, Directory } = await import('@capacitor/filesystem');
-        const { Share } = await import('@capacitor/share');
+        const Filesystem = window.Capacitor?.Plugins?.Filesystem;
+        const Share = window.Capacitor?.Plugins?.Share;
+        if (!Filesystem || !Share) throw new Error('Capacitor plugins missing');
+        const Directory = { Cache: 'CACHE' };
         const base64 = await new Promise(resolve => canvas.toBlob(b => {
           const r = new FileReader();
           r.onload = () => resolve(r.result?.toString().split(',')[1] || '');

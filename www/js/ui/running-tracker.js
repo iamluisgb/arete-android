@@ -298,10 +298,10 @@ export class GpsTracker {
 
   async _acquireWakeLock() {
     if (isCapacitor) {
-      try {
-        const { App } = await import('@capacitor/app');
-        await App.keepAwake();
-      } catch (e) { console.warn('keepAwake failed:', e); }
+      const App = window.Capacitor?.Plugins?.App;
+      if (App) {
+        try { await App.keepAwake(); } catch (e) {}
+      }
     } else if (!('wakeLock' in navigator)) {
       return;
     } else {
@@ -318,7 +318,8 @@ export class GpsTracker {
 
   _releaseWakeLock() {
     if (isCapacitor) {
-      import('@capacitor/app').then(({ App }) => App.resumeForeground().catch(() => {}));
+      const App = window.Capacitor?.Plugins?.App;
+      if (App) App.resumeForeground?.().catch(() => {});
     } else if (this._wakeLock) {
       this._wakeLock.release();
       this._wakeLock = null;
@@ -488,15 +489,11 @@ export class GpsTracker {
     }
   }
 
-  async _getNativePlugin() {
+  _getNativePlugin() {
     if (this._areteLocation) return this._areteLocation;
-    try {
-      const { registerPlugin } = await import('@capacitor/core');
-      this._areteLocation = registerPlugin('AreteLocation');
-      return this._areteLocation;
-    } catch (e) {
-      return null;
-    }
+    const plugin = window.Capacitor?.Plugins?.AreteLocation;
+    if (plugin) this._areteLocation = plugin;
+    return plugin || null;
   }
 
   _stopGps() {
