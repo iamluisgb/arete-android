@@ -854,7 +854,13 @@ input.prefilled:focus{background:var(--surface);border:none}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
 /* === Capacitor Android adaptations === */
-:root{--safe-area-bottom:env(safe-area-inset-bottom,0px);--safe-area-top:env(safe-area-inset-top,0px)}
+/* Capacitor 8 SystemBars plugin injects --safe-area-inset-* on <html>.
+   On Android 14+ env(safe-area-inset-*) is unreliable inside fixed/sticky
+   contexts, so we read the injected var first and fall back to env(). */
+:root{
+  --safe-area-bottom:var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px));
+  --safe-area-top:var(--safe-area-inset-top,env(safe-area-inset-top,0px));
+}
 body{padding-bottom:max(84px,calc(76px + var(--safe-area-bottom)))}
 nav{padding-bottom:max(8px,var(--safe-area-bottom));padding-top:max(8px,var(--safe-area-top))}
 header{padding-top:max(12px,calc(12px + var(--safe-area-top)))}
