@@ -10,7 +10,9 @@ img{max-width:100%;border-radius:var(--sp-3)}
 
 /* === Capacitor Android adaptations === */
 body{padding-bottom:max(0px,var(--safe-area-inset-bottom,env(safe-area-inset-bottom)));padding-left:var(--safe-area-inset-left,env(safe-area-inset-left));padding-right:var(--safe-area-inset-right,env(safe-area-inset-right))}
-.site-nav{padding-top:max(var(--sp-3),var(--safe-area-inset-top,env(safe-area-inset-top)))}
+/* NOTE: padding-top must be declared AFTER the .site-nav { padding: ... }
+   shorthand below or it gets reset. Higher-specificity selector instead. */
+html .site-nav{padding-top:max(var(--sp-3),var(--safe-area-inset-top,env(safe-area-inset-top)))}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
 /* Nav */
