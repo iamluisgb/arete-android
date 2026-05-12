@@ -30,7 +30,6 @@ PWA de fitness (Areté) empaquetada como app Android nativa vía Capacitor 8.3.1
 
 ### Riesgos abiertos
 - Auto-pause no detecta inmovilidad real (P1)
-- Código muerto de keep-alive audio sigue en producción (P2)
 
 ---
 
@@ -256,7 +255,7 @@ Durante una carrera, el usuario se queda parado varios minutos en un punto y el 
 
 ---
 
-### TASK-003 · 🔴 P2 — Eliminar keep-alive audio legacy
+### TASK-003 · 🟢 P2 — Eliminar keep-alive audio legacy
 
 **Contexto**
 Antes del foreground service nativo, mantenedíamos el WebView vivo en background reproduciendo un WAV silencioso (200 Hz a -50 dB) + un oscilador Web Audio + Media Session. Chrome Android detectaba samples PCM no-cero y creaba un foreground service implícito que mantenía JS y GPS despiertos.
@@ -283,12 +282,24 @@ Ya no es necesario: nuestro `LocationTrackingService` nativo cumple esa función
 
 **Bitácora**
 - **2026-05-08** — Primer intento revertido. Quitó las funciones de `audio.js` y los re-exports de `running-audio.js`, pero **dejó vivas 4 llamadas a `startKeepAlive()`/`stopKeepAlive()`** en `running.js` (líneas 533, 646, 730, 855). Resultado: la app habría reventado en runtime con `ReferenceError` al iniciar/parar carrera. Cleanup incompleto. Recordatorio: tras quitar imports, ejecutar `grep -rn "startKeepAlive\|stopKeepAlive\|resumeKeepAlive" www/` y verificar que no queden referencias antes de declarar hecho.
+- **2026-05-08** — Segundo intento, ejecución limpia siguiendo la norma:
+  1. `audio.js`: borrado el bloque entero líneas 33-146 (comentario + 4 globals + `_writeString` + `_getKeepAliveWavUrl` + `_createKeepAliveAudio` + `_startOscillator` + `startKeepAlive` + `stopKeepAlive` + `resumeKeepAlive`). El archivo pasa de 146 → 31 líneas, conserva sólo `getAudioCtx`/`beep`/`vibrate`.
+  2. `running-audio.js`: import y export reducidos a `{ beep, vibrate }`.
+  3. `running.js`: import reducido (línea 7) + borradas las 5 llamadas (`resumeKeepAlive` en el listener `visibilitychange`, `startKeepAlive` en `restoreRun` y `startGpsRun`, `stopKeepAlive` en `stopGpsRun` y `closeLiveOverlay`). El bloque entero del `visibilitychange` se elimina — su único propósito era llamar `resumeKeepAlive`.
+  4. Auditoría: `grep -rn "KeepAlive\|keepAlive" www/` → 0 hits. `grep -rn` en `android/app/src/main/assets/public/` (bundle tras `cap copy`) → 0 hits.
+  5. Otros importadores de `audio.js` (`timer.js`, `training-timer.js`) sólo usan `getAudioCtx`/`beep`/`vibrate`. Sin colaterales.
+  6. `gradlew assembleDebug` exitoso. Bundle pesa 115 líneas menos.
+
+**Cambios totales**
+- `www/js/ui/audio.js`: -115 líneas (de 146 → 31).
+- `www/js/ui/running-audio.js`: -3 / +3 (sin keep-alive en import/export).
+- `www/js/ui/running.js`: -13 / +1 (5 llamadas + bloque `visibilitychange` + import sin los 3 nombres).
 
 **Aceptación**
-- `grep -rn "KeepAlive" www/` no devuelve resultados
-- Carrera de 30 min con pantalla bloqueada sigue registrando GPS sin pérdida
-- No aparece ningún ítem de "reproducción de audio" en el panel de notificaciones
-- El bundle JS pesa menos (esperado: ~3-4 KB menos en `audio.js`)
+- ✅ `grep -rn "KeepAlive" www/` no devuelve resultados
+- ✅ Build pasa (`gradlew assembleDebug` SUCCESS)
+- 🟡 Pendiente validación en Pixel 7a real: carrera de 30 min con pantalla bloqueada sigue registrando GPS sin pérdida (el FGS nativo es ahora el único sostén — esto valida que efectivamente lo era ya)
+- 🟡 Pendiente: confirmar que no aparece ningún ítem de "reproducción de audio" en el panel de notificaciones durante una carrera
 
 ---
 

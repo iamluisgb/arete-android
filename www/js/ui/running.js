@@ -4,7 +4,7 @@ import { getRunningProgramList, getRunningPhases } from '../programs.js';
 import { safeNum, esc, confirmDanger, formatDate, today } from '../utils.js';
 import { toast } from './toast.js';
 import { GpsTracker } from './running-tracker.js';
-import { beep, vibrate, startCountdown, beepSplit, beepWorkStart, beepRestStart, beepAllDone, beepSegmentChange, startKeepAlive, stopKeepAlive, resumeKeepAlive } from './running-audio.js';
+import { beep, vibrate, startCountdown, beepSplit, beepWorkStart, beepRestStart, beepAllDone, beepSegmentChange } from './running-audio.js';
 import { ZONE_COLORS, ZONE_LABELS, getPaceZones, getHRZones, RUN_TYPE_META, formatPace, formatRunDuration, parseRunDuration, estimateZone, parseSegDistance, parseSegDuration, segModeToRunType } from './running-helpers.js';
 import { HRMonitor } from './hr-monitor.js';
 import { renderRunHistory as _renderRunHistory } from './running-history.js';
@@ -176,13 +176,6 @@ function cacheSelectors() {
 
 export function initRunning(db) {
   cacheSelectors();
-
-  // Resume keep-alive audio when returning to foreground during active run
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && tracker.state === 'tracking') {
-      resumeKeepAlive();
-    }
-  });
 
   // ── HR Monitor setup ──
   const bleAvailable = typeof navigator !== 'undefined' && !!navigator.bluetooth;
@@ -537,7 +530,6 @@ function restoreRun(snap, db) {
     clearActiveRun();
     return;
   }
-  startKeepAlive();
 
   // Restore HR accumulator (BLE connection cannot be restored)
   hrMonitor.restore(snap.hrMonitor);
@@ -650,7 +642,6 @@ function startGpsRun(db) {
 
   const started = tracker.start();
   if (!started) return;
-  startKeepAlive();
 
   // GPS gap detection
   tracker.onGapDetected((gapSec) => {
@@ -734,7 +725,6 @@ function toggleAutoPause() {
 
 function stopGpsRun(db) {
   clearActiveRun();
-  stopKeepAlive();
   $uiLock.classList.remove('active'); // Deactivate UI lock if active
   const result = tracker.stop();
   if (!result) { closeLiveOverlay(); return; }
@@ -859,7 +849,6 @@ function discardGpsRun() {
 
 function closeLiveOverlay() {
   clearActiveRun();
-  stopKeepAlive();
   $overlay.classList.remove('active');
   document.querySelector('nav').style.display = '';
   // Cleanup maps

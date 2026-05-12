@@ -1,7 +1,7 @@
 // ── Running audio/haptic patterns ────────────────────────
-import { beep, vibrate, startKeepAlive, stopKeepAlive, resumeKeepAlive } from './audio.js';
+import { beep, vibrate } from './audio.js';
 
-export { beep, vibrate, startKeepAlive, stopKeepAlive, resumeKeepAlive };
+export { beep, vibrate };
 
 /** 3-2-1 countdown: 3 short beeps + 1 long beep, then calls onComplete */
 export function startCountdown(onComplete) {
