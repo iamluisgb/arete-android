@@ -14,6 +14,7 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -40,6 +41,7 @@ public class LocationTrackingService extends Service {
     public static final String PREFS_NAME = "arete_locations";
     public static final String PREFS_KEY_BUFFER = "buffer";
 
+    private static final String TAG = "AreteLocSvc";
     private static final String CHANNEL_ID = "arete_run_tracking";
     private static final int NOTIFICATION_ID = 1042;
 
@@ -64,17 +66,33 @@ public class LocationTrackingService extends Service {
             return START_NOT_STICKY;
         }
 
-        startInForeground();
+        if (!startInForeground()) {
+            return START_NOT_STICKY;
+        }
         startTracking();
         return START_STICKY;
     }
 
-    private void startInForeground() {
+    private boolean startInForeground() {
         Notification notification = buildNotification();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
+            return true;
+        } catch (SecurityException e) {
+            // Android 14+ throws SecurityException if FGS type=location is started
+            // before ACCESS_FINE_LOCATION is granted at runtime. Stop the service
+            // cleanly instead of letting the exception kill the app.
+            Log.w(TAG, "startForeground denied — location permission missing", e);
+            stopSelf();
+            return false;
+        } catch (Throwable t) {
+            Log.e(TAG, "startForeground failed", t);
+            stopSelf();
+            return false;
         }
     }
 

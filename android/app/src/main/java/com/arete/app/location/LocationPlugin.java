@@ -57,6 +57,17 @@ public class LocationPlugin extends Plugin {
     @PluginMethod
     public void start(PluginCall call) {
         Context ctx = getContext();
+        // Android 14+ requires ACCESS_FINE_LOCATION (or COARSE) to be granted at
+        // runtime before a foreground service of type=location can call
+        // startForeground(). Refusing here avoids the SecurityException that
+        // would otherwise kill the app from inside the service.
+        if (ctx.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED
+            && ctx.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            call.reject("Location permission not granted");
+            return;
+        }
         Intent intent = new Intent(ctx, LocationTrackingService.class);
         intent.setAction(LocationTrackingService.ACTION_START);
         try {

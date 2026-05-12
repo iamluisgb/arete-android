@@ -422,6 +422,24 @@ export class GpsTracker {
     if (!isCapacitor) return;
     if (this._bgActive) return;
     try {
+      // Ensure ACCESS_FINE_LOCATION is granted before starting the FGS.
+      // On Android 14+, calling startForeground(...FOREGROUND_SERVICE_TYPE_LOCATION)
+      // without runtime location permission throws SecurityException and kills
+      // the process. Use Capacitor's Geolocation plugin to request it cleanly.
+      const Geolocation = window.Capacitor?.Plugins?.Geolocation;
+      if (Geolocation) {
+        let perm = await Geolocation.checkPermissions().catch(() => null);
+        if (perm && perm.location !== 'granted') {
+          perm = await Geolocation.requestPermissions({ permissions: ['location'] })
+            .catch(() => null);
+        }
+        if (!perm || perm.location !== 'granted') {
+          // User denied or plugin unavailable — skip the FGS. The foreground
+          // navigator.geolocation.watchPosition path will keep working until
+          // the screen locks.
+          return;
+        }
+      }
       const plugin = await this._getNativePlugin();
       if (!plugin) return;
       // Drop any leftover buffer from a previous session
