@@ -29,7 +29,6 @@ PWA de fitness (Areté) empaquetada como app Android nativa vía Capacitor 8.3.1
 - Mantener GPS vivo con `<audio>` keep-alive: hack legacy que dejará de ser necesario en cuanto este backlog cierre
 
 ### Riesgos abiertos
-- Crash en primer arranque tras conceder permiso GPS (P0)
 - Auto-pause no detecta inmovilidad real (P1)
 - Código muerto de keep-alive audio sigue en producción (P2)
 
@@ -161,7 +160,7 @@ Esta norma vale para BUG-* y TASK-*. La idea: que cualquiera (incluido yo en 3 m
 
 ---
 
-### BUG-001 · 🟡 P0 — Crash al conceder permiso GPS en primer arranque
+### BUG-001 · 🟢 P0 — Crash al conceder permiso GPS en primer arranque
 
 **Síntoma**
 En la primera instalación, al abrir la app aparece el diálogo de permisos de GPS. Al pulsar "Permitir", la app se cierra inesperadamente. Si el usuario la vuelve a abrir, ya funciona normalmente.
@@ -209,6 +208,7 @@ En la primera instalación, al abrir la app aparece el diálogo de permisos de G
   3. **JS `_startGpsBackground`**: usa `Capacitor.Plugins.Geolocation.checkPermissions()` y, si no `granted`, `requestPermissions({ permissions: ['location'] })`. Si tras eso sigue sin estar concedido, sale silenciosamente (el `navigator.geolocation.watchPosition` foreground seguirá pidiéndolo). Esto es el flujo que dispara el diálogo nativo del sistema en el momento correcto.
 - **2026-05-08** — Validado: `pm clear` + relanzar + tap "Iniciar carrera" → "Empezar (Libre)" → ahora aparece el diálogo nativo de permisos ("Allow Areté to access this device's location?"). Tras aceptar "While using the app", la carrera arranca normalmente: cronómetro corriendo, mapa cargado, app viva. NO crash. NO `FATAL EXCEPTION` en logcat. Comparado con repro previa idéntica donde el proceso moría en <300 ms.
 - **2026-05-08** — Pendiente: validar en Pixel 7a real (no marco 🟢 hasta confirmación).
+- **2026-05-08** — Confirmado por el usuario: validado en Pixel 7a real (Android 16). Primer arranque limpio, diálogo de permisos aparece, app no crashea. Cerrado en commit `0ca4a7c`.
 
 **Archivos modificados**
 - [`android/app/src/main/java/com/arete/app/location/LocationTrackingService.java`](android/app/src/main/java/com/arete/app/location/LocationTrackingService.java) — try/catch en `startInForeground` + `boolean` retorno + `START_NOT_STICKY` cuando falla.
@@ -218,7 +218,7 @@ En la primera instalación, al abrir la app aparece el diálogo de permisos de G
 **Aceptación**
 - ✅ Crash NO ocurre tras `pm clear` + primer arranque + tap "Empezar" en Iniciar carrera (validado en emulador `pixel7a_android16`)
 - ✅ Stack trace original capturado y archivado arriba
-- 🟡 Pendiente: validado en Pixel 7a real
+- ✅ Validado en Pixel 7a real (Android 16)
 
 ---
 
