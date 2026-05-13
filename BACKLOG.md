@@ -396,10 +396,125 @@ Razón: si el blog es contenido editorial/educativo de soporte, NO merece tab pr
 
 ---
 
+### FEAT-006 · 🔴 P3 — Storage local-first (SQLite + exports + sync sin backend)
+
+**Contexto**
+La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` para rutas pesadas + `Drive` como backup last-write-wins) funciona como MVP pero no escala y choca con tres muros: rendimiento, sync multi-dispositivo fiable y portabilidad real de los datos. Vista desde la filosofía "el usuario es dueño y no hay backend", el modelo objetivo es **local-first** (Ink & Switch, 2019) — el mismo marco que usan Obsidian, Logseq, Standard Notes.
+
+**Diagnóstico de lo actual**
+1. **`localStorage` es síncrono** y bloquea el UI thread en cada `saveDB`. Cada escritura serializa la base entera como un único string JSON → O(n) por save, independiente de qué cambió.
+2. **El split `localStorage` ↔ `IndexedDB` es manual y frágil**: lista hardcoded `HEAVY_FIELDS = ['route', 'splits', 'hrTimeSeries', 'hrZoneTimes', 'segments']` en [`run-store.js:6`](www/js/run-store.js#L6). Cualquier feature nueva con datos pesados que olvide actualizarla llena `localStorage` en silencio.
+3. **Sync Drive es last-write-wins bruto**: móvil A edita y sube; móvil B sin bajar primero edita y sube → cambios de A perdidos. `deletedIds` existe pero no es un sistema de tombstones completo.
+4. **Cero portabilidad estándar**: si el usuario quiere irse, le entregamos un JSON propietario de Areté. No hay export GPX/FIT (formatos universales running) ni integración con Health Connect / HealthKit.
+5. **Cero encriptación en reposo**: dispositivo robado o blob de Drive comprometido = datos de salud en claro.
+
+**Arquitectura objetivo**
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                     SQLite (.db file)                         │
+│      ← single source of truth, transaccional, indexada        │
+└───────────────────────────────────────────────────────────────┘
+   ↓ API uniforme (@capacitor-community/sqlite, nativo en Android)
+
+   Capa de sync: CRDT (Automerge) o LWW por campo + timestamps + tombstones
+        ↓
+   Drive = transporte tonto (blob cifrado .db.enc), no servidor de sync
+        ↓
+   Encriptación con clave derivada de passphrase (Argon2), guardada en
+   Android Keystore. Drive no puede leer nada.
+
+   Exports estándar (always available):
+    - Runs → GPX / FIT (universal)
+    - Workouts → JSON / Markdown plano
+    - Salud → Health Connect (Android) / HealthKit (futuro iOS)
+```
+
+**Por qué encaja con la filosofía**
+- **Dueño real**: el `.db` SQLite es portable, abierto, sobrevive 30 años. SQLite es el formato de archivo más usado del mundo. Si Areté cierra mañana, el usuario abre su `.db` con cualquier visor SQLite y todo está ahí.
+- **Sin backend**: Drive es transporte de archivos, no servicio de sync. Cero infra que mantener. Y al ir cifrado, Google no ve los datos.
+- **Sync sin perder datos**: con CRDTs o LWW-por-record con timestamps, dos dispositivos editan offline y al sincronizar hay merge determinista.
+- **Portabilidad real**: GPX/FIT/Health Connect = el usuario NO está atrapado.
+- **Privacidad real**: encriptación con clave que ni nosotros podemos pinchar.
+
+**Plan por fases**
+
+**Fase 1 · SQLite como source of truth** *(2-3 semanas)*
+- Añadir `@capacitor-community/sqlite` (~v6.x en mayo 2026). En Android usa SQLite nativo (no WASM, sin coste de bundle).
+- Definir esquema SQL: tablas `workouts`, `body_logs`, `running_logs`, `running_routes`, `custom_programs`, `settings`, `deleted_records` (tombstones), `schema_version`.
+- Migrador one-shot: al primer arranque tras update, leer `localStorage.arete` + IndexedDB `areteRuns`, escribir todo a `arete.db`, mantener backup en `localStorage.arete.backup` 1 versión.
+- Reemplazar `loadDB`/`saveDB` en [`data.js`](www/js/data.js) por wrappers async sobre SQLite. API pública del módulo sin cambios para no romper callers.
+- `localStorage` queda solo como cache rapidísimo de "última vista cargada" (≤100KB). El source of truth pasa a SQLite.
+- **Entregable**: build idéntica funcionalmente, pero todas las escrituras son atómicas + transaccionales + escalan a GBs.
+- **Riesgo**: migración con pérdida de datos si el migrador falla a la mitad. Mitigación: mantener `localStorage.arete.backup` 7 días tras la migración + flag `migrationCompleted` para no reintentar.
+
+**Fase 2 · Exports estándar** *(1-2 semanas)*
+- Export GPX por carrera: serializar `coords[]` + timestamps a `<trkpt>` con extensiones para HR/cadence.
+- Export FIT por carrera: usar `@garmin/fitsdk` (Apache 2.0). Más complejo pero es el formato de oro para correr.
+- Export JSON/Markdown de workouts: cada sesión a un `.md` con frontmatter YAML + tabla de series.
+- Export completo: `.zip` con `arete.db` + carpeta `runs/` (GPX) + carpeta `workouts/` (MD). Botón "Exportar todo" en Ajustes.
+- **Entregable**: el usuario puede llevarse sus datos a Strava, Garmin Connect, TrainingPeaks, Obsidian, etc., sin nuestra app.
+- **Riesgo**: nulo — feature aditiva, no toca el storage existente.
+
+**Fase 3 · Encriptación en reposo** *(1 semana)*
+- Passphrase opcional en onboarding ("Cifra tus datos · Si pierdes el móvil, sólo tú puedes leer tus datos"). Derivar clave con Argon2id (cost ~256MB, ~1s en móvil decente).
+- Guardar clave derivada en Android Keystore. SQLCipher (extensión de SQLite con cifrado AES-256) protege el `.db` localmente.
+- Backup a Drive: blob `arete.db.enc` AES-256-GCM con nonce aleatorio por upload.
+- Flujo de recovery en nuevo dispositivo: pedir passphrase, bajar `arete.db.enc` de Drive, descifrar, abrir.
+- **Entregable**: dispositivo robado o Drive comprometido = datos ilegibles. Areté no tiene acceso a los datos del usuario ni teóricamente.
+- **Riesgo**: si el usuario olvida la passphrase, pierde el backup. Mitigación: passphrase **opcional**, con disclaimer explícito. Sin passphrase, backup va en claro a Drive (estado actual).
+
+**Fase 4 · Sync multi-dispositivo real** *(3-4 semanas)*
+- Decidir entre CRDTs (Automerge) o LWW-por-record (con timestamps lógicos por dispositivo + tombstones reales en tabla `deleted_records`). Recomendación: empezar por LWW-por-record (más simple, suficiente para single-user-multi-device); subir a Automerge solo si vemos casos reales que LWW no resuelve.
+- Sync con Drive deja de ser "subir blob completo" → pasa a un patrón checkpoint + log:
+  - `arete.db.enc` (checkpoint mensual).
+  - `changes-{deviceId}-{timestamp}.jsonl.enc` (delta log).
+  - Al abrir app: bajar logs nuevos de otros dispositivos, mergear en local, opcionalmente compactar.
+- UI de conflicto: cuando dos dispositivos editan el mismo record en offline, mostrar diff y dejar al usuario elegir.
+- **Entregable**: el usuario instala Areté en móvil + tablet. Edita en offline en ambos. Al volver a red, todo se reconcilia sin perder nada.
+- **Riesgo**: bugs sutiles de sync que solo aparecen con uso real prolongado. Mitigación: lanzar primero como flag opt-in beta.
+
+**Fase 5 · Integración Health Connect / HealthKit** *(1-2 semanas)*
+- Android: `@capacitor-community/health-connect` para escribir runs (distancia, duración, HR avg/max, calorías) en el panel de salud del OS.
+- iOS (futuro): HealthKit equivalente cuando se haga build de iOS.
+- Importar también: si el usuario tiene corazón con Apple Watch / Wear OS, importar las series HR.
+- **Entregable**: tus runs aparecen automáticamente en Samsung Health / Google Fit / Apple Health. Y al revés.
+- **Riesgo**: solicitud de permisos de salud espanta. Mitigación: explícito y opcional, con beneficios claros.
+
+**Tradeoffs honestos**
+- **Coste real**: 8-12 semanas para fases 1-3 (ataque inicial recomendado). Fases 4-5 son optativas según tracción del producto.
+- **CRDTs son complejos**: Automerge tiene overhead de memoria y aún hay edge cases. Para single-user-multi-device, LWW-por-record es suficiente y mucho más simple — empezar por ahí.
+- **SQLite WASM en web tiene bundle grande (~1MB)**. En Android nativo no aplica. Si la web del blog/PWA pública crece, evaluar entonces.
+- **Passphrase es fricción**: hacerla opcional con disclaimer claro. Sin passphrase, todo sigue igual de cómodo.
+- **Dependencia de `@capacitor-community/sqlite`**: plugin mantenido por la comunidad. Riesgo bajo (es el estándar del ecosistema Capacitor), pero existe.
+
+**Preguntas abiertas**
+1. **Empezar por SQLite o por exports?** Mi recomendación: SQLite primero (Fase 1) porque desbloquea el resto. Pero exports (Fase 2) son más visibles para el usuario y dan "win" rápido. ¿Prioridad por valor visible o por solidez técnica?
+2. **CRDT vs LWW-por-record**: ¿optamos por la solución simple ahora (LWW) y subimos a CRDT solo si lo necesitamos, o vamos directos a Automerge para no migrar dos veces?
+3. **Encriptación obligatoria u opcional?** Obligatoria = más seguro pero fricción brutal en onboarding. Opcional = lo que recomiendo, con disclaimer claro. ¿Aceptas el tradeoff?
+4. **Health Connect como early-win o late-stage?** Es relativamente cómodo de añadir y muy visible. Podría adelantarse antes que Fase 4 (sync) si entregar valor visible importa más que cerrar la sync.
+
+**Aceptación (a definir tras decidir scope)**
+- Fase 1: migración no-destructiva probada con DB real de Luis (su instalación actual) + saves promedio <50ms.
+- Fase 2: export completo `.zip` que reabre limpio en otro Areté + GPX que reabre en Strava/Garmin.
+- Fase 3: backup en Drive no legible sin passphrase, validado con archivo abierto a mano.
+- Fase 4: dos instalaciones en offline editan diferentes records y al syncar quedan idénticas.
+- Fase 5: una carrera registrada en Areté aparece en Health Connect en < 5s.
+
+---
+
 ## 🚦 Orden recomendado
 
 ```
-✅ BUG-001 (P0)  →  ✅ TASK-003 (P2)  →  🔴 BUG-002 (P1)  →  🔴 FEAT-005 (P3) → 🔴 FEAT-004 (P3)
+✅ BUG-001 (P0) → ✅ TASK-003 (P2) → 🔴 BUG-002 (P1) → 🔴 FEAT-006-fase1 (P3)
+   → 🔴 FEAT-005 (P3) → 🔴 FEAT-006-fase2 (P3) → 🔴 FEAT-004 (P3)
+   → 🔴 FEAT-006-fase3-5 (P3, opcional según tracción)
 ```
 
-**BUG-002** antes de tocar IA: arreglar lo roto antes de mover paredes. **FEAT-005 antes que FEAT-004** porque FEAT-004 (Tests) entra naturalmente como tab dentro de "Entreno" — si lanzamos FEAT-004 primero, no tenemos dónde meterlo sin hacer una segunda mudanza. Ambos están bloqueados en preguntas abiertas dentro de sus issues.
+**Razonamiento del orden**:
+- **BUG-002** primero — siempre cerrar lo roto antes de tocar fundamentos.
+- **FEAT-006 Fase 1 (SQLite) antes de FEAT-005 (IA)**: si vamos a reorganizar pantallas, mejor que el storage subyacente ya esté en su forma final — evita escribir código nuevo sobre el `localStorage` que vamos a jubilar.
+- **FEAT-005 (IA) antes de FEAT-004 (Tests)**: como ya razonamos, los tests entran como tab dentro de "Entreno".
+- **FEAT-006 Fase 2 (exports)** entre IA y Tests porque es independiente y entrega "win" visible (los usuarios verán "Exportar a Strava" como feature de marca).
+- **FEAT-004 (Tests)** entra cuando ya hay SQLite y contenedor IA — y se modela limpio en una tabla `benchmark_results` desde día uno.
+- **Fases 3-5 de FEAT-006** quedan optativas — el orden depende de prioridades del producto.
