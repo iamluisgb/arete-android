@@ -154,7 +154,7 @@ Esta norma vale para BUG-* y TASK-*. La idea: que cualquiera (incluido yo en 3 m
 ## 📋 Backlog
 
 ### Leyenda
-- **Prioridad**: P0 (rompe app) · P1 (degrada experiencia) · P2 (deuda / limpieza)
+- **Prioridad**: P0 (rompe app) · P1 (degrada experiencia) · P2 (deuda / limpieza) · P3 (idea / feature nueva)
 - **Estado**: 🔴 abierto · 🟡 investigando · 🟢 hecho
 
 ---
@@ -303,14 +303,38 @@ Ya no es necesario: nuestro `LocationTrackingService` nativo cumple esa función
 
 ---
 
+### FEAT-004 · 🔴 P3 — Catálogo de benchmark tests de rendimiento
+
+**Contexto**
+Areté ya muestra PRs de carrera (1K, 5K, 10K, 21.1K). Encaja con el posicionamiento "Fuerza. Resistencia. Sin elegir." extender esto a un catálogo de tests de rendimiento reconocidos — Murph, Fran, 1RM de los básicos, tests de bodyweight — para que el usuario mida progreso de la misma forma que un atleta serio: comparándose con tiempos objetivos en pruebas estandarizadas, no contra el espejo.
+
+**Hipótesis de diseño**
+Mejor un catálogo curado (6-8 tests) + creación de benchmarks custom, que intentar cubrir el universo entero. Si el usuario crea muchos custom, eso nos da señal de qué añadir al catálogo curado en una iteración futura.
+
+**Tests candidatos (a discutir antes de scope)**
+- **Metcons clásicos**: Murph (1mi + 100 pull-ups + 200 push-ups + 300 squats + 1mi, ±chaleco 20lb), Fran (21-15-9 thrusters + pull-ups), Helen (3 rondas: 400m + 21 KB swings + 12 pull-ups).
+- **Strength 1RM**: sentadilla, peso muerto, press banca, press militar. Ya está la sentadilla y press militar en el dashboard como ejercicios — falta el "best ever" persistente.
+- **Bodyweight benchmarks**: dominadas máximas (un set), flexiones en 2 min, plancha estática máxima.
+- **Endurance no-correr**: 2km de remo (si Luis usa remo en gimnasio), Cooper test (12 min corriendo distancia máxima).
+
+**Preguntas abiertas para Luis**
+1. ¿Qué tests haces tú regularmente que querrías trackear primero? (Define el MVP del catálogo).
+2. ¿Murph se mide solo en tiempo, o también queremos guardar "con/sin chaleco"? Si con chaleco, ¿el campo es un toggle o peso libre?
+3. ¿Los 1RM ya tienen sitio en el flujo Fuerza actual o queremos un sitio único "PRs y benchmarks" unificado para todo?
+4. ¿Mostramos un nivel/percentil estimado (e.g. "Murph en 45 min ≈ atleta intermedio")? Útil para motivar, pero requiere tablas de referencia.
+
+**Plan**
+*(Sin plan todavía — pendiente discusión de las preguntas abiertas para definir scope mínimo).*
+
+**Aceptación**
+- *(Sin criterios todavía — definir tras decidir scope MVP).*
+
+---
+
 ## 🚦 Orden recomendado
 
 ```
-BUG-001 (P0, bloquea onboarding)
-    ↓
-BUG-002 (P1, calidad core de la feature running)
-    ↓
-TASK-003 (P2, limpieza segura tras validar BUG-002)
+✅ BUG-001 (P0)  →  ✅ TASK-003 (P2)  →  🔴 BUG-002 (P1)  →  🔴 FEAT-004 (P3)
 ```
 
-`TASK-003` se hace **después** de `BUG-002` para no introducir dos cambios al mismo tiempo en el flujo de carrera y poder bisectar si algo se rompe.
+BUG-002 antes que FEAT-004: arreglar lo que ya hay roto antes de añadir superficie nueva. FEAT-004 está bloqueado en discusión de scope (ver preguntas abiertas en el issue).
