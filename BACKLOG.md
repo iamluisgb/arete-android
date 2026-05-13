@@ -521,18 +521,86 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 
 ---
 
-## 🚦 Orden recomendado
+## 🚦 Roadmap — sprints en orden de ataque
 
-```
-✅ BUG-001 (P0) → ✅ TASK-003 (P2) → 🔴 BUG-002 (P1) → 🔴 FEAT-006-fase1 (P3)
-   → 🔴 FEAT-005 (P3) → 🔴 FEAT-006-fase2 (P3) → 🔴 FEAT-004 (P3)
-   → 🔴 FEAT-006-fase3-5 (P3, opcional según tracción)
-```
+> Antes de mirar abajo: las tres features grandes (FEAT-004/005/006) tienen **13 preguntas abiertas** pendientes de decidir. Esas preguntas son trabajo de producto, no de ingeniería — y bloquean todo el trabajo de feature. El Sprint 0 existe para resolverlas en sesiones cortas antes de tocar código.
 
-**Razonamiento del orden**:
-- **BUG-002** primero — siempre cerrar lo roto antes de tocar fundamentos.
-- **FEAT-006 Fase 1 (SQLite) antes de FEAT-005 (IA)**: si vamos a reorganizar pantallas, mejor que el storage subyacente ya esté en su forma final — evita escribir código nuevo sobre el `localStorage` que vamos a jubilar.
-- **FEAT-005 (IA) antes de FEAT-004 (Tests)**: como ya razonamos, los tests entran como tab dentro de "Entreno".
-- **FEAT-006 Fase 2 (exports)** entre IA y Tests porque es independiente y entrega "win" visible (los usuarios verán "Exportar a Strava" como feature de marca).
-- **FEAT-004 (Tests)** entra cuando ya hay SQLite y contenedor IA — y se modela limpio en una tabla `benchmark_results` desde día uno.
-- **Fases 3-5 de FEAT-006** quedan optativas — el orden depende de prioridades del producto.
+---
+
+### 🎯 Sprint 0 — Decisiones de producto *(no-código)*
+
+Resolver las preguntas abiertas que tienen bloqueadas las features. 1-2 sesiones cortas, sin compilar nada.
+
+- **FEAT-005 (4 preguntas)**: rol del blog · naming de tabs · comportamiento del FAB · prioridad de sesión activa.
+- **FEAT-004 (4 preguntas)**: qué tests TÚ haces · Murph con chaleco · PRs unificadas o separadas · niveles/percentiles.
+- **FEAT-006 (5 preguntas)**: SQLite o exports primero · CRDT vs LWW · encriptación obligatoria u opcional · timing Health Connect · interop Android↔PWA.
+
+**Salida esperada**: cada FEAT pasa a tener un plan concreto + criterios de aceptación rellenos. Cuando esto esté hecho, todo lo demás se ejecuta sin replantear.
+
+---
+
+### 🐛 Sprint 1 — Cerrar deuda técnica *(1-2 días)*
+
+- **BUG-002 · P1** — Auto-pause no detecta inmovilidad.
+- Es el único bug abierto. Cerrarlo deja la mesa limpia para entrar en modo feature.
+- Repro: o `adb emu geo fix` con coords fijas en el emulador, o salida a la calle con la app.
+
+---
+
+### 🎁 Sprint 2 — Quick-win visible *(1-2 semanas)*
+
+- **FEAT-006 Fase 2 · Exports estándar** (GPX/FIT/MD/zip).
+- *Excepción al orden lógico*: aunque sea parte de FEAT-006, NO depende de SQLite — lee vía la API pública `loadDB()` que existe hoy. Lo adelantamos porque:
+  - Independiente de todo lo demás (sin riesgo de bloquear).
+  - Alto valor percibido por el usuario ("Exportar a Strava" / "Exportar a Garmin").
+  - Refuerza la filosofía "tus datos son tuyos" justo antes de empezar el trabajo invisible de Sprint 3.
+- Cuando llegue Fase 1 (SQLite), los exports siguen funcionando sin tocar — porque la API pública no cambia.
+
+---
+
+### 🏗️ Sprint 3 — Cimentación invisible *(2-3 semanas)*
+
+- **FEAT-006 Fase 1 · SQLite como source of truth en Android** (con fachada `isCapacitor`, PWA intacta).
+- Ningún cambio visible para el usuario, pero desbloquea:
+  - Saves no-bloqueantes.
+  - Schema relacional con índices.
+  - Modelo de datos limpio para FEAT-004.
+  - Base para Fases 3-5 (encriptación, sync, Health Connect).
+- Riesgo de migración mitigado con `localStorage.backup` retenido 7 días + flag `migrationCompleted`.
+
+---
+
+### 🎨 Sprint 4 — Reorganización IA *(2-3 semanas)*
+
+- **FEAT-005 · Bottom nav `Inicio · Entreno · ⊕ · Cuerpo · Tú`**.
+- Se ejecuta sobre SQLite ya estabilizado — evita escribir código nuevo sobre `localStorage` jubilado.
+- Migración en 5 fases internas (ver issue) para evitar big-bang. Empezar por Fase 1 (crear "Tú" reagrupando Perfil + PRs + Historial + Ajustes), luego "Entreno", luego FAB.
+
+---
+
+### 📊 Sprint 5 — Tests catalog *(1-2 semanas)*
+
+- **FEAT-004 · Benchmarks de rendimiento** (Murph, Fran, 1RM, etc.).
+- Entra como tab "Tests" dentro de "Entreno" (creado en Sprint 4).
+- Datos en tabla SQLite `benchmark_results` desde día uno (definida durante Sprint 3).
+- PRs aparecen en "Tú → PRs" junto a 5K/10K/etc.
+
+---
+
+### 🔒 Sprint opcional · Hardening *(según tracción)*
+
+- **FEAT-006 Fase 3** · Encriptación con passphrase opcional.
+- **FEAT-006 Fase 4** · Sync multi-dispositivo real (LWW-por-record o CRDT).
+- **FEAT-006 Fase 5** · Health Connect / HealthKit integration.
+- No se activan automáticamente — sólo cuando haya señal real de que el usuario lo necesita (ej. usuarios pidiendo backup cifrado, o casos reales de sync rota entre dispositivos).
+
+---
+
+### 🧭 Decisiones de orden que ya están tomadas
+
+- **Sprint 0 antes de TODO**: sin las respuestas, planificar es escribir ficción.
+- **Sprint 1 antes de features**: cerrar lo roto antes de añadir superficie nueva.
+- **Sprint 2 (exports) antes de Sprint 3 (SQLite)**: el orden lógico diría al revés, pero exports no dependen de SQLite y entregan valor visible mientras Sprint 3 trabaja por debajo.
+- **Sprint 3 (SQLite) antes de Sprint 4 (IA)**: no escribir código sobre `localStorage` condenado.
+- **Sprint 4 (IA) antes de Sprint 5 (Tests)**: Tests necesitan el contenedor "Entreno" para entrar limpios.
+- **Hardening al final**: encriptación + sync + Health Connect son features que sólo valen cuando hay base de usuarios real que las pida.
