@@ -331,10 +331,75 @@ Mejor un catálogo curado (6-8 tests) + creación de benchmarks custom, que inte
 
 ---
 
+### FEAT-005 · 🔴 P3 — Replanteamiento del bottom nav (IA escalable)
+
+**Contexto**
+El footer actual `Inicio · Fuerza · Running · Cuerpo · Más` está organizado por **taxonomía de features**, no por intención del usuario. Por eso al crecer revienta: cada feature nueva pide un slot propio. El "Más" ya es síntoma de la deuda (NN/g: ítems en "More" reciben 5-10× menos clicks). FEAT-004 (catálogo de tests) y un futuro blog/guía no tienen sitio claro sin reventar la barra.
+
+**Investigación de referentes**
+- **Strava (redesign 2025)**: pasaron de `Home · Explore · Record · Profile · Training` a `Home · Maps · Record · Groups · You` — fusionaron Profile + Training en "You" para liberar espacio. Lección: cuando crece el set, se **reagrupa por intención**, no se añade.
+- **Hevy**: sólo 2 tabs (Workout + Profile). Toda la variedad vive en jerarquía interna (carpetas, rutinas).
+- **SugarWOD** (500k atletas, trackea Murph y todos los CrossFit benchmarks): el catálogo de benchmarks NO es un tab — vive como subsección dentro del Personal Logbook.
+- **Nike Training Club**: contenido editorial blended dentro de secciones relevantes, no como tab aparte.
+- **Material 3 / iOS HIG**: tope duro de 5 ítems en bottom nav.
+
+**Propuesta de diseño**
+
+```
+┌──────────┬──────────┬─────⊕─────┬──────────┬──────────┐
+│  Inicio  │ Entreno  │  Empezar  │  Cuerpo  │    Tú    │
+└──────────┴──────────┴───────────┴──────────┴──────────┘
+```
+
+- **Inicio**: dashboard del día + rail horizontal "Guía" (artículos del blog) + actividad reciente.
+- **Entreno**: contenedor de todo lo entrenable. Tabs internos `Fuerza · Running · Tests · Plan`. FEAT-004 (benchmarks) entra aquí como tab "Tests" sin tocar el footer. Sticky-tab: recuerda la última pestaña usada.
+- **⊕ Empezar (FAB centrado, patrón Material 3 "expressive bottom app bar")**: abre sheet con quick-start (Empezar carrera · Sesión de fuerza · Test · Custom). Resuelve "quiero entrenar YA" en 2 taps desde cualquier pantalla, mitiga el clic extra de Entreno.
+- **Cuerpo**: peso, medidas, nutrición, sueño/recovery cuando lleguen. Layout tipo Inicio (cards), no tabs.
+- **Tú**: PRs (5K/10K/1RM/Murph/todos), historial, perfil, ajustes, **Biblioteca** (archivo completo del blog). Patrón Strava "You".
+
+**Dónde vive el blog/Guía**
+1. **Rail "Guía"** en Inicio bajo el dashboard (3-5 cards de artículos recientes).
+2. **Cards contextuales** dentro de Entreno y Cuerpo (e.g. en `Running → Plan`: "Lee: Plan 10K en 8 semanas"; en `Cuerpo → Nutrición`: "Lee: Come como un animal"). Patrón Nike Training Club.
+3. **Tú → Biblioteca**: archivo completo navegable.
+
+Razón: si el blog es contenido editorial/educativo de soporte, NO merece tab propio — gana visibilidad apareciendo donde es útil. Si fuera contenido principal del producto (la gente abre la app para leer, no para entrenar), entonces sí cambiaría toda la propuesta. Esto es **la hipótesis a validar antes de scope final** (ver preguntas abiertas).
+
+**Por qué es robusto**
+1. Estable a 2-3 años de features nuevas: lo que venga cae en Entreno/Tú/Cuerpo sin tocar el footer.
+2. Mata el antipatrón "Más" actual.
+3. FAB centrado es el patrón Material 3 moderno (embebido en la bar, no flotando encima).
+4. Reutiliza patrón ya probado en la app: la pantalla Running actual usa tabs internos (Actividad/Historial/Progreso/Plan) — el usuario ya entiende el gesto.
+5. Migración por fases posible sin big-bang.
+
+**Tradeoffs honestos**
+- Usuarios que hoy van directos a Fuerza/Running con 1 tap pasan a 2. Mitigado por FAB ⊕ y sticky-tab en Entreno.
+- "Cuerpo" carga más al absorber nutrición/medidas/recovery. Aceptable si se organiza como Inicio (cards) en vez de tabs.
+- El FAB necesita `padding-bottom` extra en pantallas con CTAs propios ("Iniciar carrera", "Empezar entreno") para no taparlos.
+- Cambio de IA grande → riesgo de confundir al usuario actual. Mitigado por migración por fases.
+
+**Preguntas abiertas**
+1. **Rol del blog**: ¿editorial de soporte (mi recomendación, va a rail+Biblioteca) o producto principal (entonces gana tab propio y replanteamos el footer)?
+2. **Naming**: ¿"Entreno" o "Hoy"? ¿"Tú" o "Mí" o "Perfil"? ¿"Cuerpo" sigue o pasa a "Salud"?
+3. **FAB ⊕**: ¿siempre visible o sólo cuando hay sentido (e.g. ocultarlo en flujos de carrera activa para no estorbar)?
+4. **Acceso a sesión actual en curso**: si hay carrera/sesión activa, ¿el FAB la prioriza ("Continuar") o seguimos teniendo el banner persistente arriba?
+
+**Plan (en fases, una vez resueltas las preguntas)**
+1. **Fase 0 — IA + mock**: aterrizar nombres y wireframes definitivos. Validar con 1-2 pruebas de pasillo.
+2. **Fase 1 — Tú**: crear el tab "Tú" absorbiendo Perfil + PRs + Historial + Ajustes. Aún sin tocar Fuerza/Running. El footer pasa de 5 a 5 (sólo renaming "Más" → "Tú"). Riesgo bajo, valida el modelo.
+3. **Fase 2 — Entreno**: crear "Entreno" con tabs internos Fuerza/Running/Plan. Los tabs viejos Fuerza/Running desaparecen del footer. Footer pasa a `Inicio · Entreno · Cuerpo · Tú` (4 ítems).
+4. **Fase 3 — FAB ⊕**: añadir el bottom app bar Material 3 con FAB centrado. Footer final 5 slots con ⊕ en el centro.
+5. **Fase 4 — Tests** (depende de FEAT-004): añadir tab "Tests" dentro de Entreno con el catálogo de benchmarks.
+6. **Fase 5 — Guía**: rail en Inicio + Biblioteca en Tú + cards contextuales.
+
+**Aceptación**
+- *(Sin criterios todavía — definir tras decidir las 4 preguntas abiertas).*
+
+---
+
 ## 🚦 Orden recomendado
 
 ```
-✅ BUG-001 (P0)  →  ✅ TASK-003 (P2)  →  🔴 BUG-002 (P1)  →  🔴 FEAT-004 (P3)
+✅ BUG-001 (P0)  →  ✅ TASK-003 (P2)  →  🔴 BUG-002 (P1)  →  🔴 FEAT-005 (P3) → 🔴 FEAT-004 (P3)
 ```
 
-BUG-002 antes que FEAT-004: arreglar lo que ya hay roto antes de añadir superficie nueva. FEAT-004 está bloqueado en discusión de scope (ver preguntas abiertas en el issue).
+**BUG-002** antes de tocar IA: arreglar lo roto antes de mover paredes. **FEAT-005 antes que FEAT-004** porque FEAT-004 (Tests) entra naturalmente como tab dentro de "Entreno" — si lanzamos FEAT-004 primero, no tenemos dónde meterlo sin hacer una segunda mudanza. Ambos están bloqueados en preguntas abiertas dentro de sus issues.
