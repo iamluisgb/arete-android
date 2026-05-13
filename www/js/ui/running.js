@@ -109,6 +109,8 @@ const hrMonitor = new HRMonitor();
 let liveMap = null;
 let livePolyline = null;
 let liveMarker = null;
+let mapUserPanned = false;       // true once user dragged/zoomed; pauses auto-follow
+let mapRecenterControl = null;   // Leaflet control: "Centrar" button shown while panned
 let summaryMap = null;
 let detailMap = null;
 
@@ -595,7 +597,7 @@ function restoreRun(snap, db) {
       }
       const last = tracker.coords[tracker.coords.length - 1];
       if (liveMarker) liveMarker.setLatLng([last[0], last[1]]);
-      liveMap.setView([last[0], last[1]], liveMap.getZoom());
+      if (!mapUserPanned) liveMap.setView([last[0], last[1]], liveMap.getZoom());
     }, 300);
   }
 
@@ -888,7 +890,7 @@ function updateLiveUI(data) {
     if (livePolyline) {
       livePolyline.addLatLng(latlng);
     }
-    liveMap.setView(latlng, liveMap.getZoom());
+    if (!mapUserPanned) liveMap.setView(latlng, liveMap.getZoom());
   }
 
   // Type-specific panel update
@@ -1270,14 +1272,16 @@ function initLiveMap() {
 
   // Clear old map
   if (liveMap) { liveMap.remove(); liveMap = null; }
+  mapUserPanned = false;
+  mapRecenterControl = null;
 
   liveMap = L.map($liveMap, {
     zoomControl: false,
     attributionControl: false,
-    dragging: false,
-    touchZoom: false,
-    scrollWheelZoom: false,
-    doubleClickZoom: false
+    dragging: true,
+    touchZoom: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: false  // accidental on mobile
   }).setView([40.4168, -3.7038], 15); // Default Madrid
 
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -1293,6 +1297,43 @@ function initLiveMap() {
     color: '#fff',
     weight: 3
   }).addTo(liveMap);
+
+  // Smart-follow: pause auto-recenter when the user pans/zooms, expose a
+  // floating "Centrar" button to return to follow mode. The button is a
+  // Leaflet control so it doesn't need any markup in app.html.
+  const RecenterControl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-recenter-btn');
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'Centrar mapa en tu posición');
+      btn.title = 'Centrar';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="currentColor"/><circle cx="12" cy="12" r="7"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>';
+      L.DomEvent.disableClickPropagation(btn);
+      L.DomEvent.on(btn, 'click', () => {
+        mapUserPanned = false;
+        if (mapRecenterControl) { liveMap.removeControl(mapRecenterControl); mapRecenterControl = null; }
+        const coords = tracker.coords;
+        if (coords && coords.length > 0) {
+          const last = coords[coords.length - 1];
+          liveMap.setView([last[0], last[1]], 16);
+        }
+      });
+      return btn;
+    }
+  });
+  const onUserGesture = () => {
+    if (mapUserPanned) return;
+    mapUserPanned = true;
+    if (!mapRecenterControl) {
+      mapRecenterControl = new RecenterControl();
+      liveMap.addControl(mapRecenterControl);
+    }
+  };
+  // Only `dragstart` — `zoomstart` fires on programmatic setView too, which
+  // would falsely lock the camera. Pinch zoom alone keeps the user centered
+  // (same behaviour as Google Maps in navigation mode).
+  liveMap.on('dragstart', onUserGesture);
 
   // Center on user location
   navigator.geolocation.getCurrentPosition(pos => {

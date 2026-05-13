@@ -544,20 +544,24 @@ export class GpsTracker {
     const { latitude: lat, longitude: lng, altitude: alt, accuracy, speed } = pos.coords;
     const ts = pos.timestamp;
 
-    // Filter out inaccurate readings
-    if (accuracy > 30) return;
-
-    const point = [lat, lng, alt || 0, ts];
-
     // ── Auto-pause detection ──────────────────────────────
-    if (this._autoPauseEnabled && this._lastPos) {
-      const d = haversine(this._lastPos[0], this._lastPos[1], lat, lng);
-      // Use GPS speed if available, otherwise estimate from distance
-      const isStill = (speed !== null && speed >= 0)
-        ? speed < 0.5   // < 0.5 m/s ≈ 1.8 km/h
-        : d < 2;        // < 2m movement
+    // Runs BEFORE the accuracy filter because standing still degrades GPS
+    // accuracy — readings >30m would otherwise never reach the evaluator
+    // and the user would stay "running" forever. Stillness detection only
+    // needs coarse lat/lng/speed; precision is for tracking, not pausing.
+    // Also tolerates _lastPos === null by falling back to GPS speed alone,
+    // so a session that starts with poor accuracy can still auto-pause.
+    if (this._autoPauseEnabled) {
+      const hasSpeed = speed !== null && speed >= 0;
+      let isStill = null;
+      if (hasSpeed) {
+        isStill = speed < 0.5;   // < 0.5 m/s ≈ 1.8 km/h
+      } else if (this._lastPos) {
+        const d = haversine(this._lastPos[0], this._lastPos[1], lat, lng);
+        isStill = d < 2;          // < 2m movement
+      }
 
-      if (isStill) {
+      if (isStill === true) {
         if (!this._stillSince) this._stillSince = ts;
         if (!this._autoPaused && ts - this._stillSince > 5000) {
           this._autoPauseAt();
@@ -571,11 +575,17 @@ export class GpsTracker {
           });
           return;
         }
-      } else {
+      } else if (isStill === false) {
         this._stillSince = 0;
         if (this._autoPaused) this._autoResume();
       }
+      // isStill === null: neither speed nor _lastPos available — skip detection
     }
+
+    // Filter out inaccurate readings (for distance/pace calc only — auto-pause already ran)
+    if (accuracy > 30) return;
+
+    const point = [lat, lng, alt || 0, ts];
 
     // ── Normal tracking ───────────────────────────────────
     this.coords.push(point);

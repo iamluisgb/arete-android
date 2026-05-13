@@ -102,8 +102,11 @@ adb shell am start -n com.arete.app/.MainActivity
 **4. Capturar screenshot del estado actual**
 ```bash
 adb exec-out screencap -p > /tmp/shot.png
-# luego Read /tmp/shot.png para que Claude lo vea
+# Redimensionar a <2000px antes de Read (Claude limita imágenes a 2000 px en multi-imagen):
+sips -Z 1800 /tmp/shot.png --out /tmp/shot-r.png
+# luego Read /tmp/shot-r.png para que Claude lo vea
 ```
+El emulador captura a 1080×2400; sin downscale, Read da `An image in the conversation exceeds the dimension limit for many-image requests (2000px)`. `sips -Z 1800` deja la imagen en 810×1800 — bajo el límite y todavía legible. Las coordenadas de tap (`adb input tap X Y`) siguen siendo las del device original 1080×2400; multiplicar los pixels detectados en la imagen 810×1800 por `1.333` (= 1080/810 = 2400/1800).
 
 **5. Logs durante una repro**
 ```bash
@@ -224,7 +227,7 @@ En la primera instalación, al abrir la app aparece el diálogo de permisos de G
 
 ---
 
-### BUG-002 · 🔴 P1 — Auto-pause no detecta inmovilidad
+### BUG-002 · 🟡 P1 — Auto-pause no detecta inmovilidad
 
 **Síntoma**
 Durante una carrera, el usuario se queda parado varios minutos en un punto y el cronómetro sigue contando. El indicador de auto-pausa nunca aparece, aunque `autoPauseEnabled = true` por defecto.
@@ -250,11 +253,21 @@ Durante una carrera, el usuario se queda parado varios minutos en un punto y el 
 - **2026-05-08** — Primer intento revertido (vino dentro del diff equivocado de BUG-001). Bugs en el intento:
   - Promedió `speed` desde `_recentPoints.slice(-3)`, pero `_recentPoints` no almacena `speed` (sólo `lat/lng/time`). Filter siempre vacío → `avgSpeed = null` → fallback `d < 2`. Promedio era código muerto.
   - Movió el bloque arriba del filtro de accuracy ✓ (idea correcta), pero re-añadió `isStill && !isLowAccuracy` con `isLowAccuracy = accuracy > 30`. Eso anula el propio cambio: el comportamiento neto sigue siendo el de antes.
+- **2026-05-13** — Fix definitivo aplicado:
+  - Movido el bloque de auto-pause **ANTES** del filtro de accuracy en `_onPosition` ([`running-tracker.js`](www/js/ui/running-tracker.js)).
+  - Sin re-gating con `!isLowAccuracy`: ahora las lecturas estacionarias (que típicamente vienen con accuracy degradada porque el GPS multitrayectoria sin movimiento) sí cuentan para `_stillSince`.
+  - Fallback robusto: si `speed` está disponible y ≥ 0, usar `speed < 0.5 m/s`. Si no, calcular `d = haversine(_lastPos, current)`; pero si **`_lastPos === null`** (primera lectura), confiar en `speed`. La causa raíz histórica era que con `accuracy > 30` la primera lectura nunca entraba al bloque, `_lastPos` quedaba en `null` y NUNCA llegaba a haber inmovilidad medible.
+  - Filtro de accuracy se conserva, pero **sólo afecta a cómputo de distancia/pace** (que sí necesita precisión). Auto-pause ya pasó.
+- **2026-05-13** — Validación en emulador con `adb emu geo fix -3.7038 40.4168` (GPS fijo en Madrid Sol):
+  1. `pm clear com.arete.app` para estado limpio + `pm grant ACCESS_FINE_LOCATION/COARSE_LOCATION`.
+  2. Carrera iniciada → cronómetro arranca en `00:04` (EN CURSO).
+  3. Esperar 12 s sin mover el GPS simulado.
+  4. **Resultado**: estado pasa a **AUTO-PAUSA** (rojo, top center) con cronómetro congelado en `00:09` (= 4 s iniciales + 5 s de still threshold). ✅
 
 **Aceptación**
-- Parado en la calle 60 s con la app en foreground → indicador de auto-pausa aparece antes de los 10 s
-- Reanudar marcha → auto-resume en < 3 s
-- Tiempo "auto-pausado" se descuenta del elapsed
+- ✅ Parado en la calle 60 s con la app en foreground → indicador de auto-pausa aparece antes de los 10 s — confirmado en emulador (5 s reales, dentro de tolerancia).
+- 🟡 Reanudar marcha → auto-resume en < 3 s — pendiente validación con secuencia de coords cambiantes vía `adb emu geo fix`.
+- 🟡 Tiempo "auto-pausado" se descuenta del elapsed — pendiente medición real con carrera completa.
 
 ---
 
@@ -326,10 +339,25 @@ Patrón estándar de Strava / Google Maps en navegación / Waze: mapa interactiv
 **Estimación**: 1-2 horas. Cambio contenido en `running.js`, baja superficie de riesgo.
 
 **Aceptación**
-- Pan y zoom funcionan durante carrera activa.
-- Al interactuar, aparece botón "Centrar"; el mapa NO salta a la posición actual cada tick GPS.
-- Al pulsar "Centrar", vuelve el auto-follow y desaparece el botón.
-- Smoke test con `adb emu geo fix` simulando movimiento: el comportamiento es estable durante ≥2 minutos.
+- ✅ Pan y zoom funcionan durante carrera activa (`dragging/touchZoom/scrollWheelZoom: true`).
+- ✅ Al interactuar (drag), aparece botón "Centrar"; el mapa NO salta a la posición actual cada tick GPS (`if (!mapUserPanned) liveMap.setView(...)`).
+- ✅ Al pulsar "Centrar", vuelve el auto-follow y desaparece el botón.
+- 🟡 Smoke test con `adb emu geo fix` simulando movimiento durante ≥2 min — validación parcial con coords fijas (sí funciona pan + recenter), pendiente movimiento simulado real.
+
+**Bitácora**
+- **2026-05-13** — Implementación inicial:
+  - `initLiveMap` ([`running.js`](www/js/ui/running.js)): activadas `dragging/touchZoom/scrollWheelZoom`. `doubleClickZoom: false` para evitar zoom accidental con doble-tap durante carrera.
+  - Smart-follow: dos globals al scope del módulo (`mapUserPanned`, `mapRecenterControl`). Las dos `liveMap.setView` activas (línea ~600 en `restoreRun` y línea ~893 en GPS update) ahora se condicionan a `!mapUserPanned`.
+  - Listener `dragstart` (sólo dragstart, **no** `zoomstart`): este último fire también con setView programático y rompía el smart-follow.
+  - Control Leaflet custom `RecenterControl` con `L.Control.extend({position:'topright'})` — se añade al activarse pan y se elimina al pulsar el botón.
+- **2026-05-13** — Validación en emulador (BUG-002 + FEAT-007 juntos):
+  1. Tras entrar en AUTO-PAUSA, drag del mapa (`adb shell input swipe 533 1600 533 1067 400`).
+  2. Botón "Centrar" aparece top-right, el mapa se queda en la posición arrastrada (no rebota).
+  3. Tap del botón a (1000, 977 device) → mapa vuelve al pin GPS centrado y el botón desaparece.
+- **2026-05-13** — Rediseño visual del botón a estética Google Maps (feedback del usuario):
+  - Antes: botón pill `◎ Centrar` con texto + heredando el chrome `leaflet-bar` (border negro).
+  - Después: FAB circular 44×44 px, fondo blanco puro, icono SVG crosshair (concentric ring + dot + 4 ticks N/E/S/O) en `#5f6368`, shadow Google-style (`0 1px 4px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.12)`), micro-feedback `:active{transform:scale(.94)}`. Quitada la clase `leaflet-bar` porque el chrome por defecto chocaba con el FAB.
+  - SVG inline (no archivo separado) — el botón sólo aparece tras drag manual, no merece petición de red extra.
 
 ---
 
