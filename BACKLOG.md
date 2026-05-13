@@ -306,6 +306,33 @@ Ya no es necesario: nuestro `LocationTrackingService` nativo cumple esa función
 
 ---
 
+### FEAT-007 · 🔴 P2 — Mapa interactivo (pan/zoom) durante la carrera
+
+**Contexto**
+Durante una carrera activa, el usuario no puede hacer pan/zoom del mapa. El comportamiento fue **deliberado** en [`running.js:1274-1279`](www/js/ui/running.js#L1274-L1279) — el mapa se inicializa con `dragging: false`, `touchZoom: false`, `scrollWheelZoom: false` para que el auto-follow del corredor no peleara con la mano del usuario. Hoy es una limitación: el usuario quiere ver "¿hacia dónde gira este sendero?" o "¿cuánto me queda hasta esa cima?" y no puede.
+
+**Solución**
+Patrón estándar de Strava / Google Maps en navegación / Waze: mapa interactivo + smart-follow que se pausa al detectar gesto del usuario, con botón para volver al modo seguimiento.
+
+**Plan**
+1. **Activar interacciones** en [`running.js:1274-1279`](www/js/ui/running.js#L1274-L1279): `dragging: true`, `touchZoom: true`, `scrollWheelZoom: true` (resto del config sin tocar). ~5 min.
+2. **Detectar interacción manual** y pausar el auto-follow:
+   - Listener `dragstart` + `zoomstart` de Leaflet → `userInteracted = true`.
+   - Las dos llamadas a `liveMap.setView(...)` en [`running.js:591-598`](www/js/ui/running.js#L591-L598) y [`885-891`](www/js/ui/running.js#L885-L891) se condicionan a `!userInteracted`.
+   - ~30-60 min.
+3. **Botón flotante "Centrar"** sobre el mapa (top-right o bottom-right). Al pulsarlo: `userInteracted = false` + `liveMap.setView(last, currentZoom)`. Se muestra sólo cuando `userInteracted === true`. ~15-20 min.
+4. **Smoke test**: tap arrastrar mapa → desaparece auto-follow + aparece "Centrar" → tap centrar → vuelve a seguir. Pinch zoom → idem.
+
+**Estimación**: 1-2 horas. Cambio contenido en `running.js`, baja superficie de riesgo.
+
+**Aceptación**
+- Pan y zoom funcionan durante carrera activa.
+- Al interactuar, aparece botón "Centrar"; el mapa NO salta a la posición actual cada tick GPS.
+- Al pulsar "Centrar", vuelve el auto-follow y desaparece el botón.
+- Smoke test con `adb emu geo fix` simulando movimiento: el comportamiento es estable durante ≥2 minutos.
+
+---
+
 ### FEAT-004 · 🔴 P3 — Catálogo de benchmark tests de rendimiento
 
 **Contexto**
@@ -539,11 +566,14 @@ Resolver las preguntas abiertas que tienen bloqueadas las features. 1-2 sesiones
 
 ---
 
-### 🐛 Sprint 1 — Cerrar deuda técnica *(1-2 días)*
+### 🐛 Sprint 1 — Cerrar deuda + pulir running *(2-3 días)*
 
-- **BUG-002 · P1** — Auto-pause no detecta inmovilidad.
-- Es el único bug abierto. Cerrarlo deja la mesa limpia para entrar en modo feature.
-- Repro: o `adb emu geo fix` con coords fijas en el emulador, o salida a la calle con la app.
+Dos cambios contenidos al flujo de carrera, ambos en `running-tracker.js` / `running.js`. Agrupados porque tocan el mismo área y reducen el coste de testing.
+
+- **BUG-002 · P1** — Auto-pause no detecta inmovilidad. Repro con `adb emu geo fix` coords fijas o salida a la calle.
+- **FEAT-007 · P2** — Mapa interactivo (pan/zoom) durante la carrera. ~1-2 h. Activar `dragging/touchZoom/scrollWheelZoom` + smart-follow + botón "Centrar".
+
+Salida del sprint: el flujo de carrera queda pulido y la mesa limpia para entrar en features.
 
 ---
 
