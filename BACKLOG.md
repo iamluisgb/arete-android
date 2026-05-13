@@ -28,6 +28,9 @@ PWA de fitness (Areté) empaquetada como app Android nativa vía Capacitor 8.3.1
 - Auto-pause vía sólo JS: descartado, Doze mata timers — por eso pasamos a foreground service nativo
 - Mantener GPS vivo con `<audio>` keep-alive: hack legacy que dejará de ser necesario en cuanto este backlog cierre
 
+### 🪓 Decisiones arquitectónicas activas
+- **2026-05-13 — Ruptura del storage Android ↔ PWA**: la app Android va a evolucionar hacia la arquitectura local-first descrita en FEAT-006 (SQLite + exports + sync cifrado). La **PWA publicada** en `iamluisgb.github.io/arete` **sigue funcionando con `localStorage`/`IndexedDB`/Drive como hasta ahora**. Implicación: el código de `data.js`/`run-store.js` debe ramificar por plataforma (probablemente vía `isCapacitor`). Cualquier feature nueva que toque storage tiene que considerar las dos ramas.
+
 ### Riesgos abiertos
 - Auto-pause no detecta inmovilidad real (P1)
 
@@ -396,10 +399,21 @@ Razón: si el blog es contenido editorial/educativo de soporte, NO merece tab pr
 
 ---
 
-### FEAT-006 · 🔴 P3 — Storage local-first (SQLite + exports + sync sin backend)
+### FEAT-006 · 🔴 P3 — Storage local-first en Android (SQLite + exports + sync sin backend)
+
+> ⚠️ **Scope: SOLO Android.** Decisión arquitectónica del 2026-05-13: la PWA publicada en `iamluisgb.github.io/arete` se queda con `localStorage`/`IndexedDB`/Drive como hasta hoy. Esta migración aplica únicamente al APK Android. Implica ramificar `data.js`/`run-store.js` por plataforma — ver "Estrategia de ramificación" abajo.
 
 **Contexto**
 La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` para rutas pesadas + `Drive` como backup last-write-wins) funciona como MVP pero no escala y choca con tres muros: rendimiento, sync multi-dispositivo fiable y portabilidad real de los datos. Vista desde la filosofía "el usuario es dueño y no hay backend", el modelo objetivo es **local-first** (Ink & Switch, 2019) — el mismo marco que usan Obsidian, Logseq, Standard Notes.
+
+**Estrategia de ramificación (Android ↔ PWA)**
+- `data.js` ya tiene la pauta `const isCapacitor = window.Capacitor?.isNativePlatform?.()`. La aprovechamos como switch.
+- API pública del módulo (`loadDB`, `saveDB`, `safeGet`, `safeSet`, `setOnQuotaError`, etc.) se mantiene idéntica para los callers — todo el cambio ocurre tras la fachada.
+- Implementaciones detrás:
+  - PWA (`isCapacitor === false`): camino actual sin tocar.
+  - Android (`isCapacitor === true`): camino SQLite.
+- `run-store.js` (IndexedDB para rutas pesadas) se mantiene en PWA y se sustituye por tablas SQLite en Android.
+- Riesgo: drift de comportamiento entre las dos ramas. Mitigación: tests de contrato sobre la API pública que ambas implementaciones deben pasar.
 
 **Diagnóstico de lo actual**
 1. **`localStorage` es síncrono** y bloquea el UI thread en cada `saveDB`. Cada escritura serializa la base entera como un único string JSON → O(n) por save, independiente de qué cambió.
@@ -484,7 +498,7 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 **Tradeoffs honestos**
 - **Coste real**: 8-12 semanas para fases 1-3 (ataque inicial recomendado). Fases 4-5 son optativas según tracción del producto.
 - **CRDTs son complejos**: Automerge tiene overhead de memoria y aún hay edge cases. Para single-user-multi-device, LWW-por-record es suficiente y mucho más simple — empezar por ahí.
-- **SQLite WASM en web tiene bundle grande (~1MB)**. En Android nativo no aplica. Si la web del blog/PWA pública crece, evaluar entonces.
+- **Drift Android ↔ PWA**: ramificar la capa de storage implica mantener dos comportamientos. Mitigación: API pública idéntica detrás de fachada + tests de contrato.
 - **Passphrase es fricción**: hacerla opcional con disclaimer claro. Sin passphrase, todo sigue igual de cómodo.
 - **Dependencia de `@capacitor-community/sqlite`**: plugin mantenido por la comunidad. Riesgo bajo (es el estándar del ecosistema Capacitor), pero existe.
 
@@ -493,6 +507,10 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 2. **CRDT vs LWW-por-record**: ¿optamos por la solución simple ahora (LWW) y subimos a CRDT solo si lo necesitamos, o vamos directos a Automerge para no migrar dos veces?
 3. **Encriptación obligatoria u opcional?** Obligatoria = más seguro pero fricción brutal en onboarding. Opcional = lo que recomiendo, con disclaimer claro. ¿Aceptas el tradeoff?
 4. **Health Connect como early-win o late-stage?** Es relativamente cómodo de añadir y muy visible. Podría adelantarse antes que Fase 4 (sync) si entregar valor visible importa más que cerrar la sync.
+5. **Interop Android ↔ PWA**: tras la ruptura, un mismo usuario con PWA en desktop + Android en móvil tiene dos stores diferentes. ¿Cómo bridge?
+   - Opción A: Drive en formato JSON común — Android exporta/importa el `.db` SQLite a un JSON espejo que la PWA entiende. Significa mantener el conversor activo.
+   - Opción B: explicitamos que son instalaciones independientes y NO sincronizan automáticamente — el usuario migra manualmente vía export/import.
+   - Opción C: la PWA es read-only frente al backup de Android (la PWA carga el JSON de Drive pero no escribe a él). Útil para "ver datos desde el ordenador".
 
 **Aceptación (a definir tras decidir scope)**
 - Fase 1: migración no-destructiva probada con DB real de Luis (su instalación actual) + saves promedio <50ms.
