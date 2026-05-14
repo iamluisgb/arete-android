@@ -597,7 +597,7 @@ Razón: si el blog es contenido editorial/educativo de soporte, NO merece tab pr
 
 ---
 
-### FEAT-006 · 🔴 P3 — Storage local-first en Android (SQLite + exports + sync sin backend)
+### FEAT-006 · 🟡 P3 — Storage local-first en Android (SQLite + exports + sync sin backend)
 
 > ⚠️ **Scope: SOLO Android.** Decisión arquitectónica del 2026-05-13: la PWA publicada en `iamluisgb.github.io/arete` se queda con `localStorage`/`IndexedDB`/Drive como hasta hoy. Esta migración aplica únicamente al APK Android. Implica ramificar `data.js`/`run-store.js` por plataforma — ver "Estrategia de ramificación" abajo.
 
@@ -719,6 +719,27 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 - Fase 3: backup en Drive no legible sin passphrase, validado con archivo abierto a mano.
 - Fase 4: dos instalaciones en offline editan diferentes records y al syncar quedan idénticas.
 - Fase 5: una carrera registrada en Areté aparece en Health Connect en < 5s.
+
+**Bitácora**
+- **2026-05-14** — Fase 2 entregada parcial: GPX + Markdown + ZIP bundle. FIT pendiente como tarea propia.
+  - **Nuevo** [`www/js/export/gpx-exporter.js`](www/js/export/gpx-exporter.js): GPX 1.1 con namespace `gpxtpx` de Garmin para HR. `makeHrLookup` usa cursor monotónico (amortized O(1) por trkpt). Descarta HR a más de 30s del trackpoint para evitar muestras stale. Coords con precisión a 6 decimales. `gpxFilename(log)` → `YYYY-MM-DD_slug.gpx`.
+  - **Nuevo** [`www/js/export/markdown-exporter.js`](www/js/export/markdown-exporter.js): frontmatter YAML con id/date/session/phase/program/startedAt/endedAt/durationSec + `historical: true` para workouts migrados. Cuerpo con tabla por ejercicio (`| Set | kg | reps | RPE/RIR | rest |`), bodyweight como "bw", duraciones en `mm:ss`, rangos como `10-12`. Sección "## PRs" cuando aplica. Encabezado del ejercicio incluye el `exerciseId` canónico entre backticks.
+  - **Nuevo** [`www/js/export/bundle-exporter.js`](www/js/export/bundle-exporter.js): ZIP con `arete-backup.json` + `runs/*.gpx` + `workouts/*.md` + `README.txt`. JSZip 3.10.1 cargado lazy desde unpkg al primer click (mismo patrón que Leaflet en `app.html`) — coste cero al cold-start. Callback `onProgress({stage, pct})` para feedback en la UI.
+  - **Modificado** [`www/app.html`](www/app.html) (sección Datos): nuevo botón "Exportar todo (.zip)" debajo del existente "Exportar JSON".
+  - **Modificado** [`www/js/app.js`](www/js/app.js) (settings wiring): listener para `#exportBundleBtn` con dynamic import de `bundle-exporter.js` (lazy load del módulo + sus deps) + estado deshabilitado + label con progreso + toast de confirmación al cierre.
+  - **Nuevos** [`tests/gpx-exporter.test.js`](tests/gpx-exporter.test.js) (15 tests) + [`tests/markdown-exporter.test.js`](tests/markdown-exporter.test.js) (16 tests). Total suite: 75/75 ✓.
+  - **No tocado**: `package.json`. JSZip va por CDN. Sin nuevas devDeps.
+- **2026-05-14** — Pendiente para cerrar Fase 2 a 🟢:
+  1. Smoke test en APK debug: descargar el `.zip`, abrirlo, verificar:
+     - `arete-backup.json` reimporta sin errores en una instalación limpia.
+     - Un `.gpx` se abre en Strava o Garmin Connect con el track + HR visibles.
+     - Un `.md` se ve correcto en Obsidian (frontmatter parseado, tabla renderizada).
+  2. Validar comportamiento offline: si el usuario pulsa "Exportar todo" sin red la primera vez (JSZip no cacheado), debería mostrar el toast de error sin colgar la UI.
+- **2026-05-14** — Pendiente como tarea propia (sub-sprint Fase 2.5): export FIT para running (`@garmin/fitsdk`) + FIT para fuerza (mensaje `set` con `repetitions`/`weight`/`category`). Es la parte que abre Garmin Connect / Hevy / TrainingPeaks con el detalle de las series. Por complejidad (lib externa + binary writer + tests con fixtures) se decidió sacarla de este sprint y abrirla aparte.
+
+**Archivos modificados/nuevos (Fase 2 parcial)**
+- Nuevos: `www/js/export/gpx-exporter.js`, `www/js/export/markdown-exporter.js`, `www/js/export/bundle-exporter.js`, `tests/gpx-exporter.test.js`, `tests/markdown-exporter.test.js`.
+- Modificados: `www/app.html` (+8 líneas: botón Exportar todo), `www/js/app.js` (+22 líneas: listener + lazy import).
 
 ---
 
