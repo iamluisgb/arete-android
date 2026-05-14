@@ -28,9 +28,11 @@
     "@capacitor/status-bar": "^8.0.2",
     "graceful-fs": "^4.2.11",
     "jsdom": "^26.1.0",
+    "sql.js": "^1.14.1",
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "^8.1.0",
     "@capacitor/android": "^8.3.1",
     "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^8.3.1",
