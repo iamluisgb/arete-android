@@ -1,7 +1,10 @@
 import { mergeDB } from './utils.js';
 import { stripHeavyFields, splitAndStoreRoutes, clearRunStore, getAllRunRoutes } from './run-store.js';
+import { migrateWorkoutV4ToV5 } from './strength-schema.js';
 
 const STORAGE_KEY = 'arete';
+const BACKUP_KEY = 'arete.backup.v4';
+const BACKUP_RETENTION_DAYS = 7;
 
 const isCapacitor = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.();
 
@@ -65,7 +68,7 @@ const Storage = {
   }
 };
 
-const CURRENT_SCHEMA = 4;
+const CURRENT_SCHEMA = 5;
 
 const DEFAULTS = { schemaVersion: CURRENT_SCHEMA, program: 'arete', phase: 1, workouts: [], bodyLogs: [], deletedIds: [], customPrograms: [], runningLogs: [], runningProgram: '', runningWeek: 1, runningGoal: { type: 'km', target: 0, enabled: false }, settings: { height: 175, age: 32, race5k: 0, maxHR: 0 } };
 
@@ -94,6 +97,14 @@ const migrations = [
       db.settings.maxHR = db.settings.age ? 220 - db.settings.age : 0;
     }
   },
+  // v4 → v5: strength workouts schema v5 — typed numeric sets, exerciseId,
+  // startedAt timestamps. Non-destructive: per-set `_raw` keeps the v4 string.
+  // See www/js/strength-schema.js for the contract.
+  (db) => {
+    for (const w of (db.workouts || [])) {
+      migrateWorkoutV4ToV5(w);
+    }
+  },
 ];
 
 /** Run pending migrations on a loaded db object */
@@ -107,6 +118,32 @@ export function migrateDB(db) {
   return db;
 }
 
+/** Snapshot the raw db blob before migrating across a schema bump.
+ *  Only stores once per migration window; lets us recover if a v5 migrator bug
+ *  corrupts strength data. Auto-expires after BACKUP_RETENTION_DAYS. */
+function _maybeBackupBeforeMigration(rawJson, fromVersion) {
+  if (fromVersion >= CURRENT_SCHEMA) return;
+  try {
+    const existing = Storage.getItem(BACKUP_KEY);
+    if (existing) {
+      const e = JSON.parse(existing);
+      const ageMs = Date.now() - (e.savedAt || 0);
+      if (ageMs > BACKUP_RETENTION_DAYS * 86400_000) {
+        Storage.removeItem(BACKUP_KEY);
+      } else {
+        return;  // already have a fresh backup
+      }
+    }
+    Storage.setItem(BACKUP_KEY, JSON.stringify({
+      savedAt: Date.now(),
+      fromVersion,
+      raw: rawJson,
+    }));
+  } catch (e) {
+    console.warn('pre-migration backup failed:', e);
+  }
+}
+
 /** Load database from localStorage, falling back to defaults */
 export function loadDB() {
   try {
@@ -114,6 +151,7 @@ export function loadDB() {
     if (raw) {
       const d = JSON.parse(raw);
       if (d && d.workouts) {
+        _maybeBackupBeforeMigration(raw, d.schemaVersion || 1);
         const db = { ...DEFAULTS, ...d };
         return migrateDB(db);
       }
@@ -123,6 +161,23 @@ export function loadDB() {
     console.warn('loadDB: corrupt storage data, using defaults', e);
     return { ...DEFAULTS };
   }
+}
+
+/** @returns {{savedAt:number, fromVersion:number, raw:string}|null} */
+export function getPreMigrationBackup() {
+  try {
+    const s = Storage.getItem(BACKUP_KEY);
+    return s ? JSON.parse(s) : null;
+  } catch { return null; }
+}
+
+/** Restore the pre-migration snapshot. Returns true on success. */
+export function restorePreMigrationBackup() {
+  const b = getPreMigrationBackup();
+  if (!b || !b.raw) return false;
+  Storage.setItem(STORAGE_KEY, b.raw);
+  Storage.removeItem(BACKUP_KEY);
+  return true;
 }
 
 /** Track a deleted item ID so mergeDB never resurrects it */

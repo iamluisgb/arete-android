@@ -2,6 +2,7 @@ import { saveDB, getSaveRevision } from '../data.js';
 import { ROMAN } from '../constants.js';
 import { getPrograms, getActiveProgram, getAllPhases } from '../programs.js';
 import { esc } from '../utils.js';
+import { findExerciseId } from '../exercise-catalog.js';
 import { toast } from './toast.js';
 import { exFmtTime, parseDurationStr, buildTimerConfig, initExTimerEvents, stopExTimer, isExTimerActive } from './training-timer.js';
 
@@ -10,6 +11,7 @@ export { exFmtTime, parseDurationStr, buildTimerConfig };
 
 let editingId = null;
 let _formExpanded = false;
+let _workoutStartedAt = null;  // epoch ms when the user first put data into this draft; survives across reloads via draft.startedAt
 let $exerciseList, $trainSession, $trainDate, $trainNotes, $prefillBanner, $prefillText, $saveBtn, $prCelebration, $prList, $sessionOverview;
 
 // ── Session draft auto-save ──────────────────────────────
@@ -32,6 +34,8 @@ function saveDraft() {
     checks.push({ ex: l.dataset.ex, set: l.dataset.set });
   });
   if (!hasData && !checks.length) { localStorage.removeItem(DRAFT_KEY); return; }
+  // Stamp startedAt on the first real save (when the user actually starts filling data).
+  if (_workoutStartedAt == null) _workoutStartedAt = Date.now();
   try {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       session: $trainSession.value,
@@ -39,7 +43,8 @@ function saveDraft() {
       notes: $trainNotes.value,
       values,
       checks,
-      ts: Date.now()
+      ts: Date.now(),
+      startedAt: _workoutStartedAt,
     }));
   } catch { /* quota */ }
 }
@@ -52,6 +57,7 @@ function scheduleDraft() {
 function clearDraft() {
   localStorage.removeItem(DRAFT_KEY);
   clearTimeout(_draftTimer);
+  _workoutStartedAt = null;
 }
 
 function restoreDraft() {
@@ -69,6 +75,9 @@ function restoreDraft() {
     });
     if (draft.notes) $trainNotes.value = draft.notes;
     if (draft.date) $trainDate.value = draft.date;
+    // Recover the originally-stamped startedAt so a session that spans reloads
+    // still attributes the right start time.
+    if (draft.startedAt) _workoutStartedAt = draft.startedAt;
     // Restore set-done checks
     if (draft.checks?.length) {
       draft.checks.forEach(({ ex, set }) => {
@@ -697,6 +706,7 @@ export function saveWorkout(db) {
 
   const exData = exercises.map((ex, i) => {
     const mode = ex.mode || (ex.type === 'hiit' || ex.type === 'density' ? 'result' : 'sets');
+    const exerciseId = findExerciseId(ex.name);
     if (mode === 'sets') {
       const sets = [];
       for (let s = 0; s < ex.sets; s++) {
@@ -704,10 +714,10 @@ export function saveWorkout(db) {
         const r = document.querySelector(`[data-ex="${i}"][data-set="${s}"][data-field="reps"]`);
         sets.push({ kg: k ? k.value : '', reps: r ? r.value : '' });
       }
-      return { name: ex.name, sets };
+      return { name: ex.name, exerciseId, sets };
     } else {
       const r = document.querySelector(`[data-ex="${i}"][data-set="0"][data-field="reps"]`);
-      const exObj = { name: ex.name || ex.mode, sets: [{ kg: '', reps: r ? r.value : '' }] };
+      const exObj = { name: ex.name || ex.mode, exerciseId, sets: [{ kg: '', reps: r ? r.value : '' }] };
       if (ex.type === 'hiit') {
         exObj.type = 'hiit';
         if (ex.rounds)    exObj.rounds    = ex.rounds;
@@ -734,17 +744,37 @@ export function saveWorkout(db) {
   });
 
   const prog = getActiveProgram();
+  const now = Date.now();
 
   if (editingId) {
     const idx = db.workouts.findIndex(w => w.id === editingId);
     if (idx !== -1) {
-      const workout = { id: editingId, date, session, phase: db.phase, program: prog, notes, exercises: exData };
+      const prev = db.workouts[idx];
+      // Preserve original startedAt/_historical when editing; only update endedAt + duration if we have a real startedAt.
+      const startedAt = prev.startedAt ?? null;
+      const endedAt = startedAt && !prev._historical ? now : prev.endedAt;
+      const durationSec = startedAt && endedAt ? Math.max(0, Math.round((endedAt - startedAt) / 1000)) : prev.durationSec;
+      const workout = {
+        id: editingId, date, session, phase: db.phase, program: prog, notes,
+        ...(startedAt != null ? { startedAt } : {}),
+        ...(endedAt != null ? { endedAt } : {}),
+        ...(durationSec != null ? { durationSec } : {}),
+        ...(prev._historical ? { _historical: true } : {}),
+        exercises: exData,
+      };
       if (prs.length > 0) workout.prs = prs;
       db.workouts[idx] = workout;
     }
     editingId = null;
   } else {
-    const workout = { id: Date.now(), date, session, phase: db.phase, program: prog, notes, exercises: exData };
+    const startedAt = _workoutStartedAt || now;
+    const endedAt = now;
+    const durationSec = Math.max(0, Math.round((endedAt - startedAt) / 1000));
+    const workout = {
+      id: now, date, session, phase: db.phase, program: prog, notes,
+      startedAt, endedAt, durationSec,
+      exercises: exData,
+    };
     if (prs.length > 0) workout.prs = prs;
     db.workouts.push(workout);
   }
