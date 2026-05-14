@@ -748,8 +748,31 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
     - Edge cases: db vacía, db no-objeto (throw), routes Map ausente, recuperación tras meta corrupted.
   - **Tests verdes**: 113/113 (de 100 → 113). `cap sync` limpio.
   - **No tocado**: `data.js`, `app.js`, `run-store.js`, `app.html`. La PWA en `iamluisgb.github.io/arete` sigue intacta.
-- **2026-05-14** — Sub-fase C: modificar `data.js` con switch `isCapacitor` (la PWA mantiene localStorage, Android pasa a SQLite repos detrás de la misma API pública).
-- **2026-05-14** — Sub-fase D: smoke test en Pixel 7a real con DB real de Luis. Confirmar que la PWA sigue intacta tras `cap sync`.
+- **2026-05-14** — Sub-fase C entregada: fachada `isCapacitor` en `data.js`. La PWA y Android ahora ejecutan rutas distintas detrás de la misma API pública. **Esta es la sub-fase de mayor blast radius — tras este commit la app ya no es bit-for-bit idéntica.**
+  - **Decisión arquitectónica clave**: **cola serial** (`_saveQueue = _saveQueue.then(_doSave)`) en lugar de convertir los 27 callers de `saveDB` a `await`. `saveDB(db)` ahora devuelve `Promise<void>` pero los callers que la ignoran siguen funcionando — la cola garantiza orden de escritura sin race conditions. Único cambio invasivo: `loadDB()` pasa a async (1 línea en `app.js:56`). Blast radius reducido de ~29 archivos a 2.
+  - **Modificado** [`www/js/data.js`](www/js/data.js) (refactor mayor):
+    - `loadDB()` ahora async. Switch `isCapacitor`: PWA mantiene `_loadFromLocalStorage()` 1:1; Android usa `_loadFromSqlite()` con dynamic imports.
+    - `_loadFromSqlite` abre adapter + corre `migrateSchema` + si `!isMigrationCompleted` ejecuta `migrateFromData` (one-shot import desde localStorage + IDB) + `_hydrateFromSqlite` que reconstruye el shape `db` exacto.
+    - `_hydrateFromSqlite` rehidrata top-level singletons (`program`/`phase`/`runningProgram`/`runningWeek`/`runningGoal`) que viven como `_program`/`_phase`/... en la tabla `settings` con prefijo `_`. La API pública del `db` no cambia.
+    - `saveDB(db)` ahora con cola serial. Resto del contrato preservado: `setOnSave`/`setOnQuotaError`/`getSaveRevision` invocados igual.
+    - `_saveToSqlite(db)` full-blob: `saveMany` por cada colección + flatten de singletons a settings. UPSERT cost O(N); <100ms esperado para 200 workouts. Si profiling muestra que domina frame time → dirty tracking en iteración futura (anotado en el código).
+    - `exportData(db)` y nuevo helper público `getAllRoutes()` agnóstico de plataforma: PWA → IDB (`getAllRunRoutes`), Android → SQLite (`runningLogsRepo.getAllRoutes`).
+    - `importData` ahora tiene rama Android: tras `mergeDB`, las heavy fields llegan completas en el JSON → escritas directo a SQLite. PWA conserva el split `splitAndStoreRoutes` → IDB.
+    - `clearAllData` ahora async: también borra todas las tablas SQLite cuando Android.
+    - **Bug fix colateral**: `DEFAULTS` pasaba a ser objeto compartido — cada `loadDB()` devolvía un spread shallow con los mismos arrays internos por referencia. Tests con múltiples `loadDB()` veían pushes acumulados entre tests. Reemplazado por `defaults()` factory. En producción el bug nunca se manifestó (un solo `loadDB` por vida del proceso) pero los tests son los primeros en pegarle.
+  - **Modificado** [`www/js/app.js`](www/js/app.js): línea 56, `const db = await loadDB();` (única adaptación de caller necesaria gracias a la cola serial).
+  - **Modificado** [`www/js/export/bundle-exporter.js`](www/js/export/bundle-exporter.js): cambia `getAllRunRoutes` de `run-store.js` por `getAllRoutes` de `data.js` (agnóstico de plataforma).
+  - **Modificado** [`www/js/db/migrator.js`](www/js/db/migrator.js): el migrador one-shot ahora también persiste top-level singletons (program, phase, runningProgram, runningWeek, runningGoal) en la tabla `settings` con prefijo `_`. Test del migrador adaptado (settings: 4 → 6) + nuevo test `migrates top-level singletons`.
+  - **Nuevo** [`tests/data-facade.test.js`](tests/data-facade.test.js) con `@vitest-environment jsdom`: 15 tests cubriendo el path PWA end-to-end (loadDB de localStorage vacío/corrupto/v4 → migración v4→v5 + backup), round-trip saveDB → loadDB, `saveDB` retorna Promise, `setOnSave` invocado, `getSaveRevision` se incrementa, **cola serial preserva orden con 3 saves consecutivos**, error en un save NO atasca la cola (UPSERT idempotente sigue funcionando), helpers puros (`validateDB`/`validateImportData`/`markDeleted`/`pruneDeletedIds`), y rollback con `restorePreMigrationBackup`.
+  - **No tests del path Android directamente**: requeriría mockear `window.Capacitor` + plugin SQLite entero. La lógica Android se cubre por (a) tests de los repos + migrador con sql.js (114 tests), (b) smoke test en APK debug en sub-fase D. Trade-off honesto documentado en `data-facade.test.js`.
+  - **Tests verdes**: 129/129 (de 114 → 129). `cap sync` limpio.
+  - **Estado de la PWA `iamluisgb.github.io/arete`**: el código nuevo NO se ejecuta sobre la PWA — `isCapacitor` es `false`, todo va por la rama `_loadFromLocalStorage` / `_saveToLocalStorage`. Pero `loadDB` ahora es async y `app.js:56` hace `await loadDB()` → la PWA arranca igual pero a través de la cola de microtasks. Smoke test rápido en sub-fase D para confirmar que no hay regresión visible.
+- **2026-05-14** — Sub-fase D (próxima): smoke test en APK debug + en PWA real.
+  1. APK debug: `pm clear` + abrir app → no crashea, migración one-shot escribe SQLite, datos visibles tras restart.
+  2. APK debug: crear workout nuevo + save → verificar en `arete.db` vía `adb shell sqlite3 /data/data/com.arete.app/databases/arete`.
+  3. APK debug: editar workout migrado `_historical` → `startedAt` preservado.
+  4. APK debug: "Exportar todo" funciona post-migración (routes desde SQLite).
+  5. PWA en `iamluisgb.github.io/arete`: tras push, smoke test rápido — la app abre, se ven workouts pasados, save funciona.
 
 **Archivos modificados/nuevos (sub-fase A)**
 - Nuevos: `www/js/db/schema.js`, `www/js/db/sqlite-adapter.js`, `www/js/db/repos.js`, `tests/_sqljs-adapter.js`, `tests/sqlite-schema.test.js`, `tests/sqlite-repos.test.js`.
@@ -757,6 +780,10 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 
 **Archivos modificados/nuevos (sub-fase B)**
 - Nuevos: `www/js/db/migrator.js`, `tests/sqlite-migrator.test.js`.
+
+**Archivos modificados/nuevos (sub-fase C)**
+- Nuevos: `tests/data-facade.test.js`.
+- Modificados: `www/js/data.js` (refactor mayor — fachada + cola serial + DEFAULTS factory), `www/js/app.js` (línea 56: `await loadDB`), `www/js/export/bundle-exporter.js` (getAllRoutes agnóstico), `www/js/db/migrator.js` (singletons top-level a settings con prefijo `_`), `tests/sqlite-migrator.test.js` (test adaptado + nuevo).
 
 - **2026-05-14** — Fase 2 entregada parcial: GPX + Markdown + ZIP bundle. FIT pendiente como tarea propia.
   - **Nuevo** [`www/js/export/gpx-exporter.js`](www/js/export/gpx-exporter.js): GPX 1.1 con namespace `gpxtpx` de Garmin para HR. `makeHrLookup` usa cursor monotónico (amortized O(1) por trkpt). Descarta HR a más de 30s del trackpoint para evitar muestras stale. Coords con precisión a 6 decimales. `gpxFilename(log)` → `YYYY-MM-DD_slug.gpx`.
