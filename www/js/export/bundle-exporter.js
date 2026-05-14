@@ -10,7 +10,7 @@
  * bundle small — most users never click "Export everything".
  */
 
-import { getAllRunRoutes } from '../run-store.js';
+import { getAllRoutes } from '../data.js';
 import { runToGpx, gpxFilename } from './gpx-exporter.js';
 import { workoutToMarkdown, markdownFilename } from './markdown-exporter.js';
 
@@ -64,7 +64,7 @@ export async function exportBundle(db, { onProgress } = {}) {
 
   // ── Full DB (with heavy fields reconstructed) ────────────
   report('Backup JSON', 5);
-  const routes = (db.runningLogs?.length) ? await getAllRunRoutes() : new Map();
+  const routes = (db.runningLogs?.length) ? await getAllRoutes() : new Map();
   const fullDB = db.runningLogs?.length
     ? { ...db, runningLogs: db.runningLogs.map(l => {
         const heavy = routes.get(l.id);

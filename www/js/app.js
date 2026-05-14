@@ -51,9 +51,8 @@ if (isCapacitor && typeof google === 'undefined') {
 
 // === INIT ===
 async function init() {
-  // Load DB from storage (async for Capacitor Preferences)
-  // Load DB (synchronous — localStorage)
-  const db = loadDB();
+  // Load DB. Async: localStorage on PWA, SQLite on Android (FEAT-006 Fase 1).
+  const db = await loadDB();
   const AUTOSYNC_KEY = 'areteAutoSync';
   const THEME_KEY = 'areteTheme';
 

@@ -83,7 +83,19 @@ export async function migrateFromData(adapter, db, runRoutes = new Map()) {
   const runningLogs = Array.isArray(db.runningLogs) ? db.runningLogs : [];
   const customPrograms = Array.isArray(db.customPrograms) ? db.customPrograms : [];
   const deletedIds = Array.isArray(db.deletedIds) ? db.deletedIds : [];
-  const settings = (db.settings && typeof db.settings === 'object') ? db.settings : {};
+
+  // Top-level db singletons piggyback on the `settings` table with a `_` prefix
+  // so they share one round-trip path. The facade hydrator strips the prefix
+  // back when rebuilding the in-memory db shape.
+  const userSettings = (db.settings && typeof db.settings === 'object') ? db.settings : {};
+  const settings = {
+    ...userSettings,
+    ...(db.program        !== undefined ? { _program:        db.program } : {}),
+    ...(db.phase          !== undefined ? { _phase:          db.phase } : {}),
+    ...(db.runningProgram !== undefined ? { _runningProgram: db.runningProgram } : {}),
+    ...(db.runningWeek    !== undefined ? { _runningWeek:    db.runningWeek } : {}),
+    ...(db.runningGoal    !== undefined ? { _runningGoal:    db.runningGoal } : {}),
+  };
 
   // No outer transaction here: each repo's saveMany opens its own BEGIN/COMMIT
   // and SQLite doesn't support nested BEGINs. Safety comes from two properties:

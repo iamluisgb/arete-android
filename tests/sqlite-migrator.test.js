@@ -116,15 +116,27 @@ describe('migrateFromData', () => {
   it('writes every collection into SQLite and returns stats', async () => {
     const db = realisticDB();
     const result = await migrateFromData(adapter, db, realisticRoutes());
+    // settings = 4 user settings (height/age/race5k/maxHR) + 2 prefixed singletons (_program, _phase)
     expect(result).toMatchObject({
       skipped: false,
       workouts: 2,
       runs: 2,
       bodyLogs: 1,
       customPrograms: 1,
-      settings: 4,
+      settings: 6,
       tombstones: 3,
     });
+  });
+
+  it('migrates top-level singletons (program, phase, etc.) as _-prefixed settings', async () => {
+    const db = { ...realisticDB(), runningProgram: 'media-maraton-1h40', runningWeek: 4, runningGoal: { type: 'km', target: 50, enabled: true } };
+    await migrateFromData(adapter, db, realisticRoutes());
+    const s = await settingsRepo.loadAll(adapter);
+    expect(s._program).toBe('arete');
+    expect(s._phase).toBe(2);
+    expect(s._runningProgram).toBe('media-maraton-1h40');
+    expect(s._runningWeek).toBe(4);
+    expect(s._runningGoal).toEqual({ type: 'km', target: 50, enabled: true });
   });
 
   it('marks migration_completed in meta', async () => {

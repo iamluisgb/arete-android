@@ -47,30 +47,45 @@ export function setOnQuotaError(fn) { _onQuotaError = fn; }
 /** @param {Function} fn - Callback invoked when another tab changes the data */
 export function setOnExternalChange(fn) { _onExternalChange = fn; }
 
-// Detect writes from other tabs (not in native)
+// Detect writes from other tabs (PWA only; Capacitor is single-process).
 if (typeof window !== 'undefined' && !isCapacitor) {
   window.addEventListener('storage', (e) => {
     if (e.key === STORAGE_KEY && _onExternalChange) _onExternalChange();
   });
 }
 
-// Storage wrapper — localStorage works in Capacitor WebView (50MB+ quota)
-// Preferences has only ~4MB limit, so we use localStorage for everything
+// Raw localStorage wrapper — used by both the PWA path and the one-shot
+// import-from-localStorage step on Android. WebView localStorage gives 50MB+.
 const Storage = {
-  getItem(key) {
-    return localStorage.getItem(key);
-  },
-  setItem(key, value) {
-    localStorage.setItem(key, value);
-  },
-  removeItem(key) {
-    localStorage.removeItem(key);
-  }
+  getItem(key) { return localStorage.getItem(key); },
+  setItem(key, value) { localStorage.setItem(key, value); },
+  removeItem(key) { localStorage.removeItem(key); },
 };
 
 const CURRENT_SCHEMA = 5;
 
-const DEFAULTS = { schemaVersion: CURRENT_SCHEMA, program: 'arete', phase: 1, workouts: [], bodyLogs: [], deletedIds: [], customPrograms: [], runningLogs: [], runningProgram: '', runningWeek: 1, runningGoal: { type: 'km', target: 0, enabled: false }, settings: { height: 175, age: 32, race5k: 0, maxHR: 0 } };
+/**
+ * Factory for a fresh default db. Returns a *new* object every call so
+ * `loadDB()` users can safely push() into `workouts`/`bodyLogs`/etc without
+ * leaking state into the next caller. (The previous shared-DEFAULTS object
+ * caused tests to see push() results from earlier tests.)
+ */
+function defaults() {
+  return {
+    schemaVersion: CURRENT_SCHEMA,
+    program: 'arete',
+    phase: 1,
+    workouts: [],
+    bodyLogs: [],
+    deletedIds: [],
+    customPrograms: [],
+    runningLogs: [],
+    runningProgram: '',
+    runningWeek: 1,
+    runningGoal: { type: 'km', target: 0, enabled: false },
+    settings: { height: 175, age: 32, race5k: 0, maxHR: 0 },
+  };
+}
 
 /** Schema migrations — each takes a db object and mutates it in place */
 const migrations = [
@@ -99,7 +114,6 @@ const migrations = [
   },
   // v4 → v5: strength workouts schema v5 — typed numeric sets, exerciseId,
   // startedAt timestamps. Non-destructive: per-set `_raw` keeps the v4 string.
-  // See www/js/strength-schema.js for the contract.
   (db) => {
     for (const w of (db.workouts || [])) {
       migrateWorkoutV4ToV5(w);
@@ -118,9 +132,7 @@ export function migrateDB(db) {
   return db;
 }
 
-/** Snapshot the raw db blob before migrating across a schema bump.
- *  Only stores once per migration window; lets us recover if a v5 migrator bug
- *  corrupts strength data. Auto-expires after BACKUP_RETENTION_DAYS. */
+/** Snapshot the raw db blob before migrating across a schema bump. */
 function _maybeBackupBeforeMigration(rawJson, fromVersion) {
   if (fromVersion >= CURRENT_SCHEMA) return;
   try {
@@ -131,7 +143,7 @@ function _maybeBackupBeforeMigration(rawJson, fromVersion) {
       if (ageMs > BACKUP_RETENTION_DAYS * 86400_000) {
         Storage.removeItem(BACKUP_KEY);
       } else {
-        return;  // already have a fresh backup
+        return;
       }
     }
     Storage.setItem(BACKUP_KEY, JSON.stringify({
@@ -141,25 +153,6 @@ function _maybeBackupBeforeMigration(rawJson, fromVersion) {
     }));
   } catch (e) {
     console.warn('pre-migration backup failed:', e);
-  }
-}
-
-/** Load database from localStorage, falling back to defaults */
-export function loadDB() {
-  try {
-    const raw = Storage.getItem(STORAGE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d && d.workouts) {
-        _maybeBackupBeforeMigration(raw, d.schemaVersion || 1);
-        const db = { ...DEFAULTS, ...d };
-        return migrateDB(db);
-      }
-    }
-    return { ...DEFAULTS };
-  } catch (e) {
-    console.warn('loadDB: corrupt storage data, using defaults', e);
-    return { ...DEFAULTS };
   }
 }
 
@@ -178,6 +171,154 @@ export function restorePreMigrationBackup() {
   Storage.setItem(STORAGE_KEY, b.raw);
   Storage.removeItem(BACKUP_KEY);
   return true;
+}
+
+// ────────────────────────────────────────────────────────────────
+// PWA path — localStorage (synchronous, current behaviour)
+// ────────────────────────────────────────────────────────────────
+
+function _loadFromLocalStorage() {
+  try {
+    const raw = Storage.getItem(STORAGE_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d && d.workouts) {
+        _maybeBackupBeforeMigration(raw, d.schemaVersion || 1);
+        const db = { ...defaults(), ...d };
+        return migrateDB(db);
+      }
+    }
+    return defaults();
+  } catch (e) {
+    console.warn('loadDB: corrupt storage data, using defaults', e);
+    return defaults();
+  }
+}
+
+function _saveToLocalStorage(db) {
+  const dbForStorage = db.runningLogs?.length
+    ? { ...db, runningLogs: db.runningLogs.map(stripHeavyFields) }
+    : db;
+  Storage.setItem(STORAGE_KEY, JSON.stringify(dbForStorage));
+}
+
+// ────────────────────────────────────────────────────────────────
+// Android path — SQLite (async, lazy-imported)
+// ────────────────────────────────────────────────────────────────
+
+let _sqliteAdapterPromise = null;
+async function _getAdapter() {
+  if (!_sqliteAdapterPromise) {
+    _sqliteAdapterPromise = (async () => {
+      const { openDB } = await import('./db/sqlite-adapter.js');
+      const { migrateSchema } = await import('./db/schema.js');
+      const adapter = await openDB();
+      await migrateSchema(adapter);
+      return adapter;
+    })();
+  }
+  return _sqliteAdapterPromise;
+}
+
+async function _loadFromSqlite() {
+  const adapter = await _getAdapter();
+  const { isMigrationCompleted, migrateFromData } = await import('./db/migrator.js');
+
+  // One-shot import from legacy storage the first time the app runs on Android
+  // after this upgrade. After this, SQLite is the source of truth.
+  if (!(await isMigrationCompleted(adapter))) {
+    const legacy = _loadFromLocalStorage();   // also writes arete.backup.v4 if v4→v5 fires
+    const runRoutes = await getAllRunRoutes();
+    await migrateFromData(adapter, legacy, runRoutes);
+  }
+
+  return _hydrateFromSqlite(adapter);
+}
+
+async function _hydrateFromSqlite(adapter) {
+  const {
+    workoutsRepo, bodyLogsRepo, runningLogsRepo, customProgramsRepo,
+    settingsRepo, tombstonesRepo,
+  } = await import('./db/repos.js');
+
+  const [workouts, bodyLogs, runningLogs, customPrograms, settingsRaw, deletedIds] = await Promise.all([
+    workoutsRepo.loadAll(adapter),
+    bodyLogsRepo.loadAll(adapter),
+    runningLogsRepo.loadAll(adapter),
+    customProgramsRepo.loadAll(adapter),
+    settingsRepo.loadAll(adapter),
+    tombstonesRepo.loadIds(adapter),
+  ]);
+
+  // Split _-prefixed top-level singletons from user settings.
+  const {
+    _program, _phase, _runningProgram, _runningWeek, _runningGoal,
+    ...userSettings
+  } = settingsRaw;
+
+  return {
+    schemaVersion: CURRENT_SCHEMA,
+    program:        _program        ?? defaults().program,
+    phase:          _phase          ?? defaults().phase,
+    runningProgram: _runningProgram ?? defaults().runningProgram,
+    runningWeek:    _runningWeek    ?? defaults().runningWeek,
+    runningGoal:    _runningGoal    ?? defaults().runningGoal,
+    settings: { ...defaults().settings, ...userSettings },
+    workouts,
+    bodyLogs,
+    runningLogs,
+    customPrograms,
+    deletedIds,
+  };
+}
+
+async function _saveToSqlite(db) {
+  const adapter = await _getAdapter();
+  const {
+    workoutsRepo, bodyLogsRepo, runningLogsRepo, customProgramsRepo,
+    settingsRepo, tombstonesRepo,
+  } = await import('./db/repos.js');
+
+  // Full-blob save: UPSERT every collection. O(N) cost in number of records;
+  // expected <100ms for the realistic 200-workout ceiling. If profiling shows
+  // this dominating frame time, the next step is per-record dirty tracking.
+  if (db.workouts?.length) await workoutsRepo.saveMany(adapter, db.workouts);
+  if (db.bodyLogs?.length) await bodyLogsRepo.saveMany(adapter, db.bodyLogs);
+  if (db.runningLogs?.length) {
+    for (const run of db.runningLogs) await runningLogsRepo.save(adapter, run);
+  }
+  if (db.customPrograms?.length) {
+    for (const p of db.customPrograms) {
+      if (p?._customId) await customProgramsRepo.save(adapter, p);
+    }
+  }
+
+  // Flatten top-level singletons into settings table with `_` prefix.
+  const flatSettings = {
+    ...(db.settings || {}),
+    ...(db.program        !== undefined ? { _program:        db.program } : {}),
+    ...(db.phase          !== undefined ? { _phase:          db.phase } : {}),
+    ...(db.runningProgram !== undefined ? { _runningProgram: db.runningProgram } : {}),
+    ...(db.runningWeek    !== undefined ? { _runningWeek:    db.runningWeek } : {}),
+    ...(db.runningGoal    !== undefined ? { _runningGoal:    db.runningGoal } : {}),
+  };
+  if (Object.keys(flatSettings).length) {
+    await settingsRepo.setAll(adapter, flatSettings);
+  }
+
+  if (db.deletedIds?.length) {
+    await tombstonesRepo.addMany(adapter, db.deletedIds.map(String), 'workouts');
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+// Public facade
+// ────────────────────────────────────────────────────────────────
+
+/** Load the database. Always async; resolves to the same `db` shape on both platforms. */
+export async function loadDB() {
+  if (!isCapacitor) return _loadFromLocalStorage();
+  return _loadFromSqlite();
 }
 
 /** Track a deleted item ID so mergeDB never resurrects it */
@@ -199,7 +340,6 @@ export function pruneDeletedIds(db) {
     ...(db.bodyLogs || []).map(b => b.id),
     ...(db.runningLogs || []).map(r => r.id),
   ]);
-  // Keep only IDs that are still referenced or recent (last 200)
   const recent = db.deletedIds.slice(-200);
   db.deletedIds = [...new Set([...recent, ...db.deletedIds.filter(id => liveIds.has(id))])];
 }
@@ -208,15 +348,28 @@ export function pruneDeletedIds(db) {
 let _saveRevision = 0;
 export function getSaveRevision() { return _saveRevision; }
 
-/** Persist db to localStorage (validates structure first) */
+/**
+ * Persist db. Always returns a Promise but UI callers can fire-and-forget:
+ * a serial queue chains saves in arrival order so back-to-back saves never race.
+ * Boot-time callers that need ordering can still `await saveDB(db)`.
+ */
+let _saveQueue = Promise.resolve();
 export function saveDB(db) {
+  _saveQueue = _saveQueue
+    .then(() => _doSave(db))
+    .catch(e => { console.error('saveDB queue failed:', e); });
+  return _saveQueue;
+}
+
+async function _doSave(db) {
   if (!validateDB(db)) { console.error('saveDB: invalid db, aborting save', db); return; }
   pruneDeletedIds(db);
   try {
-    const dbForStorage = db.runningLogs?.length
-      ? { ...db, runningLogs: db.runningLogs.map(stripHeavyFields) }
-      : db;
-    Storage.setItem(STORAGE_KEY, JSON.stringify(dbForStorage));
+    if (isCapacitor) {
+      await _saveToSqlite(db);
+    } else {
+      _saveToLocalStorage(db);
+    }
     _saveRevision++;
   } catch (e) {
     console.error('saveDB: storage write failed', e);
@@ -226,19 +379,27 @@ export function saveDB(db) {
   if (_onSave) _onSave(db);
 }
 
-/** Download db as a JSON file (reconstructs full running logs from IDB) */
+/** Heavy fields loader, platform-agnostic. Used by export tooling. */
+export async function getAllRoutes() {
+  if (!isCapacitor) return getAllRunRoutes();
+  const adapter = await _getAdapter();
+  const { runningLogsRepo } = await import('./db/repos.js');
+  return runningLogsRepo.getAllRoutes(adapter);
+}
+
+/** Download db as a JSON file (reconstructs full running logs with heavy fields) */
 export async function exportData(db) {
-  let fullDB = db;
+  let fullLogs = db.runningLogs;
   if (db.runningLogs?.length) {
-    const routes = await getAllRunRoutes();
+    const routes = await getAllRoutes();
     if (routes.size > 0) {
-      const fullLogs = db.runningLogs.map(l => {
+      fullLogs = db.runningLogs.map(l => {
         const heavy = routes.get(l.id);
         return heavy ? { ...l, ...heavy } : l;
       });
-      fullDB = { ...db, runningLogs: fullLogs };
     }
   }
+  const fullDB = { ...db, runningLogs: fullLogs };
   const b = new Blob([JSON.stringify(fullDB, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(b);
@@ -269,19 +430,23 @@ export function importData(event, db, onSuccess) {
   const f = event.target.files[0];
   if (!f) return;
   const r = new FileReader();
-  r.onload = () => {
+  r.onload = async () => {
     try {
       const d = JSON.parse(r.result);
       const err = validateImportData(d);
       if (err) { alert(`Formato no válido: ${err}`); return; }
       Object.assign(db, mergeDB(db, d));
-      // Split heavy route data to IndexedDB before saving
-      splitAndStoreRoutes(db.runningLogs).then(stripped => {
+      if (isCapacitor) {
+        // SQLite path: heavy fields live in repos, no IDB split needed.
+        await saveDB(db);
+      } else {
+        // PWA path: split heavy into IDB before persisting the light db blob.
+        const stripped = await splitAndStoreRoutes(db.runningLogs);
         db.runningLogs = stripped;
-        saveDB(db);
-        alert('Datos importados');
-        location.reload();
-      });
+        await saveDB(db);
+      }
+      alert('Datos importados');
+      location.reload();
     } catch (e) {
       console.warn('importData failed:', e);
       alert('Error al leer el archivo');
@@ -291,9 +456,21 @@ export function importData(event, db, onSuccess) {
 }
 
 /** Wipe all data after double confirmation */
-export function clearAllData() {
+export async function clearAllData() {
   if (!confirm('¿Borrar TODOS los datos?')) return;
   if (!confirm('Última oportunidad. ¿Borrar todo?')) return;
   Storage.removeItem(STORAGE_KEY);
-  clearRunStore().finally(() => location.reload());
+  try { await clearRunStore(); } catch { /* swallow */ }
+  if (isCapacitor) {
+    try {
+      const adapter = await _getAdapter();
+      for (const t of ['workouts', 'body_logs', 'running_logs', 'running_routes',
+                       'custom_programs', 'settings', 'deleted_records', 'meta']) {
+        await adapter.run(`DELETE FROM ${t}`);
+      }
+    } catch (e) {
+      console.warn('SQLite clearAllData failed:', e);
+    }
+  }
+  location.reload();
 }
