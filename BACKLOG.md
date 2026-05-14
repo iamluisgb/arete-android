@@ -1,6 +1,6 @@
 # Areté Android — Backlog & Canvas
 
-> Última actualización: 2026-05-08
+> Última actualización: 2026-05-14
 
 ---
 
@@ -361,6 +361,149 @@ Patrón estándar de Strava / Google Maps en navegación / Waze: mapa interactiv
 
 ---
 
+### FEAT-008 · 🟡 P2 — Schema v5 de sesiones de fuerza (datos exportables a FIT / Health Connect)
+
+> ⚠️ **Prerequisito de FEAT-006 Fase 2 (export FIT de fuerza) y Fase 5 (Health Connect strength).** Sin schema v5 los exportadores son imposibles de implementar limpiamente — habría que parsear strings libres y mantener heurísticas frágiles.
+
+**Contexto**
+El modelo actual de sesiones de fuerza ([`www/js/data.js`](www/js/data.js) + [`www/js/ui/training.js`](www/js/ui/training.js)) funciona como tracker propio pero no es exportable a ningún estándar (Health Connect, FIT, TCX). El bloqueo NO es el storage (eso lo resuelve FEAT-006 Fase 1) — es el **modelo de datos**: `reps` y `kg` se guardan como strings libres (`"5"`, `"10-12"`, `"18:32"`, `"4R · 18:32"`), no hay timestamps por set, ni duración de sesión, ni RPE/RIR, ni catálogo canónico de ejercicios. Cualquier exportador serio tendría que adivinar.
+
+**Diagnóstico del estado actual** (auditoría 2026-05-14)
+
+Schema actual v4 — `workout`:
+```js
+{
+  id, date: "YYYY-MM-DD", session, phase, program, notes,
+  exercises: [{
+    name: "Sentadilla", type, mode,             // 9 modos: sets/result/interval/tabata/rounds/ladder/pyramid/amrap/emom/superset
+    sets: [{ kg: "80", reps: "5" }],           // ← strings libres
+    rounds, rest                                // ← pegado del modelo HIIT
+  }],
+  prs: [{ exercise, kg, prevKg }]
+}
+```
+
+Problemas concretos:
+1. **`reps`/`kg` como strings libres**. Conviven `"5"`, `"10-12"`, `"18:32"`, `"4R · 18:32"`. Ningún parser estándar entiende esto.
+2. **Sin timestamps a nivel set ni sesión**. Solo `date: "YYYY-MM-DD"`. FIT y Health Connect exigen `startTime`/`endTime` epoch ms.
+3. **Sin duración total** (ni `startedAt`/`endedAt`/`durationSec`).
+4. **Sin RPE, RIR, tempo**. Información que diferencia un export "amateur" de uno aceptable por un coach.
+5. **`rest` global por bloque, no por set**. Modelo HIIT encima del de fuerza, mezcla dos cosas.
+6. **9 modos heterogéneos sin discriminador**. FIT trata cada cosa distinto (`set_type`, `intensity`, `workout_step`); Health Connect mapea a `ExerciseType` específicos.
+7. **Sin identificador estándar de ejercicio**. Solo `name: "Sentadilla"` — cada exportador mantendría su tabla de traducción.
+
+**Modelo propuesto — schema v5**
+
+Filosofía: **aditivo, no destructivo**. Todos los campos nuevos opcionales para que la migración no requiera UI nueva el día uno. Bump `schemaVersion: 4 → 5` con migrador automático.
+
+```js
+workout = {
+  id, date, session, phase, program, notes,
+  startedAt: 1715688000000,        // NUEVO — epoch ms
+  endedAt:   1715692500000,        // NUEVO — epoch ms
+  durationSec: 4500,               // NUEVO — denormalizado para queries
+  bodyweightKg: 78.5,              // NUEVO — opcional, para ejercicios bw
+  exercises: [{
+    name: "Sentadilla trasera",
+    exerciseId: "back_squat",      // NUEVO — slug canónico del catálogo interno
+    type, mode,
+    sets: [{
+      kg: 100,                     // CAMBIO — number (null permitido para bw puro)
+      reps: 5,                     // CAMBIO — number
+      repsMax: null,               // NUEVO — para rangos "10-12" → reps:10, repsMax:12
+      rpe: 8,                      // NUEVO — opcional (1-10)
+      rir: 2,                      // NUEVO — opcional (uno u otro)
+      tempo: "30X1",               // NUEVO — opcional, formato estándar 4-dígitos
+      restSec: 180,                // NUEVO — descanso DESPUÉS de este set
+      completedAt: 1715688420000,  // NUEVO — opcional, epoch ms del tap "completar"
+      isWarmup: false,             // NUEVO — distingue calentamiento del trabajo real
+      isFailure: false             // NUEVO — set llevado al fallo
+    }]
+  }]
+}
+```
+
+**Catálogo de ejercicios** (`www/js/exercise-catalog.js` nuevo):
+```js
+{
+  id: "back_squat",
+  name_es: "Sentadilla trasera",
+  name_en: "Back Squat",
+  healthConnectType: "EXERCISE_TYPE_SQUAT",
+  fitCategory: "squat",                  // FIT exercise_category
+  fitName: "back_squat"                  // FIT exercise_name
+}
+```
+
+**Plan**
+1. **Definir el catálogo inicial** (`www/js/exercise-catalog.js`): ~30-50 ejercicios base con `healthConnectType` y `fitCategory`/`fitName`. Cubrir los ejercicios reales que aparecen en los workouts de Luis hoy + los del programa Areté canónico.
+2. **Tipos + validador** (`www/js/strength-schema.js` nuevo): JSDoc o `.d.ts` para `Workout`/`Exercise`/`Set` v5 + `validateWorkoutV5(w)` que devuelve errores legibles. Sin esto, la regresión por escritura mal hecha en la UI pasa desapercibida.
+3. **Migrador `migrateV4ToV5(db)`** dentro del flujo existente en [`data.js`](www/js/data.js):
+   - `parseLegacySet(s)`: `"5" → {reps:5}`, `"10-12" → {reps:10, repsMax:12}`, `"18:32" → {durationSec:1112}`, `"4R · 18:32" → {reps:4, durationSec:1112}`, vacío → `{reps:null}`. Conservar `s._raw` durante 1 versión por si hay que rollback.
+   - `startedAt` reconstruido como `Date.parse(w.date + "T12:00:00")` (mediodía local) cuando falte. Marcar `w._historical = true` para que exportadores sepan que el timestamp es estimado.
+   - Match de `exerciseId` desde `name` con lookup case-insensitive contra el catálogo + dejar `exerciseId: null` cuando no haya match (no fallar — solo log de "ejercicios sin catálogo" para añadirlos en una iteración futura).
+4. **UI en `training.js`** — escritura del modelo nuevo en cada save:
+   - Pulsar "Completar serie" estampa `completedAt = Date.now()` (es la única información temporal nueva que el usuario "regala" sin esfuerzo).
+   - Cuando se abre la sesión: `startedAt = Date.now()`. Cuando se cierra/guarda: `endedAt = Date.now()` + `durationSec` calculado.
+   - Inputs RPE/RIR/tempo/restSec: opcionales, escondidos detrás de un toggle "Avanzado" en la card del set para no asustar al usuario casual.
+5. **Tests** sobre `parseLegacySet` cubriendo los 5 patrones de string detectados en el dato real de Luis + un fixture de migración v4→v5 con un workout completo.
+
+**Estrategia de migración v4→v5**
+- Misma pauta que las migraciones v1→v4 existentes en `data.js`: aplicar al cargar, una sola vez, persistir el resultado.
+- **No-destructiva**: conservar `_raw` en cada set durante 1 versión (v5 → v6 lo limpia). Si la migración la cagas y un export sale mal, el string original sigue ahí.
+- **Idempotente**: si ya es v5, no toca nada.
+- Backup `localStorage.arete.backup` durante 7 días + flag `migrationCompleted` siguiendo el patrón previsto en FEAT-006 Fase 1.
+
+**Tradeoffs honestos**
+- **Doble fuente de verdad temporal**: `date` (legacy, sigue ahí) + `startedAt`/`endedAt` (nuevo). Conservar ambos en v5; deprecar `date` en una v6 futura. Vale la pena la fricción para no romper la UI de calendario actual.
+- **Catálogo manual**: alguien (yo) tiene que mantener el mapeo. Mitigación: empezar con los ejercicios que Luis usa de verdad (auditar los workouts reales) y crecer por demanda.
+- **9 modos exóticos**: ladder/pyramid/amrap/emom/superset siguen siendo difíciles de mapear a Health Connect/FIT. Decisión explícita: en el exportador, si `mode ∉ {sets, result}` declarar como `OTHER` y meter el detalle en `notes`. No bloquear la entrega por casos del 5%.
+- **UI escondida**: si los campos RPE/RIR/tempo viven detrás de un toggle, en la práctica nadie los rellena. Aceptable para v1 — el modelo está listo si Luis los quiere usar, sin imponérselo al usuario casual.
+
+**Por qué P2 y no P3**
+Sin esto, FEAT-006 Fase 2 (exports) y Fase 5 (Health Connect) son a medio cocinar — solo cubrirían running. Y running ya tiene GPX/FIT bien. La promesa "Fuerza. Resistencia. Sin elegir." se sostiene si el dato de fuerza es tan portable como el de running. Por eso entra antes que FEAT-006 Fase 2 en el roadmap.
+
+**Archivos sospechosos / a tocar**
+- [`www/js/data.js`](www/js/data.js) — añadir `migrateV4ToV5` al pipeline existente de migraciones.
+- [`www/js/ui/training.js`](www/js/ui/training.js) — escritura del modelo v5 (líneas 689-775 del bloque save) + opcionalmente UI "Avanzado".
+- [`www/js/exercise-catalog.js`](www/js/exercise-catalog.js) — **nuevo**, catálogo canónico.
+- [`www/js/strength-schema.js`](www/js/strength-schema.js) — **nuevo**, validador + tipos.
+- `tests/` — fixtures de migración + tests de `parseLegacySet`.
+
+**Bitácora**
+- **2026-05-14** — Implementación inicial (Sprint 2). Cambios:
+  - **Nuevo** [`www/js/exercise-catalog.js`](www/js/exercise-catalog.js): 34 ejercicios reales extraídos de `arete.json` + `kettlebell.json`. Cada entrada con `id` slug, `name_es`, `name_en`, aliases, y mapeo a `healthConnectSegment` + `fitCategory`/`fitName`. Lookup O(1) por id o por nombre (case + accent-insensitive). KB exóticos con `healthConnectSegment: null` — Health Connect no tiene segmentos específicos para olympic lifts.
+  - **Nuevo** [`www/js/strength-schema.js`](www/js/strength-schema.js): tipos JSDoc del modelo v5, `parseLegacySet` (cubre 9 patrones: integer, range con `-`/`–`/`/`/`a`, mm:ss, `30s`/`1min`/`1h`, `4R · 18:32`, sufijo `/lado`, coma decimal, free text → null con `_raw`), `migrateWorkoutV4ToV5` idempotente, `validateWorkoutV5` con mensajes legibles, `dropRawFromWorkout` para futura v6.
+  - **Modificado** [`www/js/data.js`](www/js/data.js): `CURRENT_SCHEMA: 4 → 5`, nueva migración v4→v5 en el pipeline existente, backup pre-migración en `arete.backup.v4` con auto-expiry a 7 días, helpers `getPreMigrationBackup`/`restorePreMigrationBackup` para rollback manual.
+  - **Modificado** [`www/js/ui/training.js`](www/js/ui/training.js): nuevo `_workoutStartedAt` que se estampa al primer `saveDraft` (no al cargar el form — evita contaminar con tiempo de inactividad). Sobrevive a recargas vía `draft.startedAt`. `saveWorkout` ahora escribe `startedAt`/`endedAt`/`durationSec` en cada workout nuevo. Al editar uno migrado (`_historical: true`) preserva el timestamp estimado. Cada exercise se enriquece con `exerciseId` desde el catálogo (`null` si no hay match — no falla).
+  - **Nuevo** [`vitest.config.js`](vitest.config.js) + [`tests/strength-schema.test.js`](tests/strength-schema.test.js) (31 tests) + [`tests/exercise-catalog.test.js`](tests/exercise-catalog.test.js) (13 tests). `npm run test` → 44/44 pasa.
+- **2026-05-14** — Validación end-to-end con un v4 simulado realista (Press Banca + Dominada + Curl con rango + Plancha + Swing KB + Tabata + Burpees con free text):
+  - 6 de 7 ejercicios mapean a `exerciseId` correcto. "Tabata Swing & Snatch" devuelve `null` — correcto, es protocolo, no ejercicio. Validador clean.
+  - Parsing limpio: `"60" × "8"` → `{kg:60, reps:8}`; `"20" × "10-12"` → `{reps:10, repsMax:12}`; `"1min"` → `{durationSec:60}`; `"30s/lado"` → `{durationSec:30}`; `"4R · 18:32"` → `{reps:4, durationSec:1112}`; `"Total reps"` → `{reps:null, _raw:{reps:"Total reps"}}` (conserva el original).
+  - `npx cap sync android`: 0.227s sin errores. Bundle copiado a `android/app/src/main/assets/public/`.
+- **2026-05-14** — Pendiente para cerrar 🟢:
+  1. Probar la migración con la DB real de Luis (instalación actual): exportar JSON v4 actual, importar en una instalación limpia → ver que carga sin errores, todos los workouts visibles, `% de exerciseId !== null` ≥ 80%.
+  2. Crear un workout NUEVO con el APK debug instalado → verificar `startedAt`/`endedAt`/`durationSec` en `localStorage.arete`.
+  3. Editar un workout HISTÓRICO migrado → verificar que `_historical: true` se preserva y `startedAt` no cambia.
+  4. Decisión abierta: ¿toggle "Avanzado" para RPE/RIR/tempo en UI ahora o en una iteración posterior? El schema lo soporta sin cambios; solo falta UI.
+
+**Archivos modificados/nuevos**
+- Nuevos: `www/js/exercise-catalog.js`, `www/js/strength-schema.js`, `vitest.config.js`, `tests/strength-schema.test.js`, `tests/exercise-catalog.test.js`.
+- Modificados: `www/js/data.js` (+47 líneas: migración v5 + backup), `www/js/ui/training.js` (+30 líneas: startedAt tracking + exerciseId en saves).
+
+**Aceptación**
+- ✅ `schemaVersion === 5` tras migración automática (validado en v4 simulado).
+- ✅ `parseLegacySet` cubre los patrones identificados con 31 tests verdes.
+- ✅ Una sesión NUEVA creada post-migración tiene `startedAt`/`endedAt`/`durationSec` rellenos sin que el usuario haya hecho nada extra.
+- ✅ Una sesión MIGRADA tiene `_historical: true` y `startedAt` estimado; UI de calendario/historial no toca el campo.
+- ✅ Validador `validateWorkoutV5(w)` corre limpio sobre el v4 simulado tras migración.
+- ✅ Catálogo cubre ≥80% (medido: 6/7 = 86% en el smoke real; "Tabata" es protocolo, no ejercicio).
+- ✅ Backup `arete.backup.v4` presente con auto-expiry a 7 días + `restorePreMigrationBackup()` para rollback manual.
+- 🟡 Validación en DB real de Luis pendiente — sin esto no se sube a 🟢.
+- 🟡 Decisión sobre UI "Avanzado" para RPE/RIR/tempo.
+
+---
+
 ### FEAT-004 · 🔴 P3 — Catálogo de benchmark tests de rendimiento
 
 **Contexto**
@@ -520,10 +663,11 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 **Fase 2 · Exports estándar** *(1-2 semanas)*
 - Export GPX por carrera: serializar `coords[]` + timestamps a `<trkpt>` con extensiones para HR/cadence.
 - Export FIT por carrera: usar `@garmin/fitsdk` (Apache 2.0). Más complejo pero es el formato de oro para correr.
+- Export FIT por sesión de fuerza: mensaje `session` + `workout_step` + `set` (con `repetitions`, `weight`, `category`). **Depende de FEAT-008**: con `reps`/`kg` como strings libres del schema v4 no se puede serializar limpio. Sin schema v5, este bullet queda parado.
 - Export JSON/Markdown de workouts: cada sesión a un `.md` con frontmatter YAML + tabla de series.
-- Export completo: `.zip` con `arete.db` + carpeta `runs/` (GPX) + carpeta `workouts/` (MD). Botón "Exportar todo" en Ajustes.
-- **Entregable**: el usuario puede llevarse sus datos a Strava, Garmin Connect, TrainingPeaks, Obsidian, etc., sin nuestra app.
-- **Riesgo**: nulo — feature aditiva, no toca el storage existente.
+- Export completo: `.zip` con `arete.db` + carpeta `runs/` (GPX) + carpeta `workouts/` (MD + FIT). Botón "Exportar todo" en Ajustes.
+- **Entregable**: el usuario puede llevarse sus datos a Strava, Garmin Connect, TrainingPeaks, Hevy, Obsidian, etc., sin nuestra app.
+- **Riesgo**: nulo para running (feature aditiva). Para strength, depende de FEAT-008 estar cerrado.
 
 **Fase 3 · Encriptación en reposo** *(1 semana)*
 - Passphrase opcional en onboarding ("Cifra tus datos · Si pierdes el móvil, sólo tú puedes leer tus datos"). Derivar clave con Argon2id (cost ~256MB, ~1s en móvil decente).
@@ -544,11 +688,13 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
 - **Riesgo**: bugs sutiles de sync que solo aparecen con uso real prolongado. Mitigación: lanzar primero como flag opt-in beta.
 
 **Fase 5 · Integración Health Connect / HealthKit** *(1-2 semanas)*
-- Android: `@capacitor-community/health-connect` para escribir runs (distancia, duración, HR avg/max, calorías) en el panel de salud del OS.
+- Android: `@capacitor-community/health-connect` para escribir:
+  - Runs: distancia, duración, HR avg/max, calorías. → `ExerciseSessionRecord` tipo `RUNNING`.
+  - Sesiones de fuerza: `ExerciseSessionRecord` tipo `STRENGTH_TRAINING` + `ExerciseSegment` por ejercicio + segmentos repetidos por set. **Depende de FEAT-008**: el mapeo a `ExerciseType` y la estructura de sets/reps tipados son prerequisito.
 - iOS (futuro): HealthKit equivalente cuando se haga build de iOS.
 - Importar también: si el usuario tiene corazón con Apple Watch / Wear OS, importar las series HR.
-- **Entregable**: tus runs aparecen automáticamente en Samsung Health / Google Fit / Apple Health. Y al revés.
-- **Riesgo**: solicitud de permisos de salud espanta. Mitigación: explícito y opcional, con beneficios claros.
+- **Entregable**: tus runs Y tus sesiones de fuerza aparecen automáticamente en Samsung Health / Google Fit / Apple Health. Y al revés.
+- **Riesgo**: solicitud de permisos de salud espanta. Mitigación: explícito y opcional, con beneficios claros. Apps de salud pasan revisión más estricta en Play Store — planificar tiempo extra para la primera aprobación.
 
 **Tradeoffs honestos**
 - **Coste real**: 8-12 semanas para fases 1-3 (ataque inicial recomendado). Fases 4-5 son optativas según tracción del producto.
@@ -605,18 +751,28 @@ Salida del sprint: el flujo de carrera queda pulido y la mesa limpia para entrar
 
 ---
 
-### 🎁 Sprint 2 — Quick-win visible *(1-2 semanas)*
+### 🧬 Sprint 2 — Modelo de datos de fuerza *(1-2 semanas)*
 
-- **FEAT-006 Fase 2 · Exports estándar** (GPX/FIT/MD/zip).
-- *Excepción al orden lógico*: aunque sea parte de FEAT-006, NO depende de SQLite — lee vía la API pública `loadDB()` que existe hoy. Lo adelantamos porque:
-  - Independiente de todo lo demás (sin riesgo de bloquear).
-  - Alto valor percibido por el usuario ("Exportar a Strava" / "Exportar a Garmin").
-  - Refuerza la filosofía "tus datos son tuyos" justo antes de empezar el trabajo invisible de Sprint 3.
-- Cuando llegue Fase 1 (SQLite), los exports siguen funcionando sin tocar — porque la API pública no cambia.
+- **FEAT-008 · Schema v5 de sesiones de fuerza** (catálogo de ejercicios + tipos numéricos + timestamps + RPE/RIR opcional + migrador v4→v5).
+- No depende de SQLite — vive aún sobre `localStorage`/`safeGet`. Aprovecha el pipeline de migraciones existente en `data.js`.
+- Es prerequisito de Sprint 3 (exports FIT de fuerza) y de FEAT-006 Fase 5 (Health Connect strength).
+- Cambio de schema antes que cambio de motor: una variable a la vez. Si el modelo v5 se rompe sobre `localStorage` (visible, rápido de iterar), se detecta antes de meterlo dentro de SQLite.
 
 ---
 
-### 🏗️ Sprint 3 — Cimentación invisible *(2-3 semanas)*
+### 🎁 Sprint 3 — Quick-win visible *(1-2 semanas)*
+
+- **FEAT-006 Fase 2 · Exports estándar** (GPX/FIT running + FIT/MD strength + zip completo).
+- *Excepción al orden lógico*: aunque sea parte de FEAT-006, NO depende de SQLite — lee vía la API pública `loadDB()` que existe hoy. Lo adelantamos porque:
+  - Independiente del storage (sin riesgo de bloquear).
+  - Alto valor percibido por el usuario ("Exportar a Strava" / "Exportar a Garmin" / "Exportar a Hevy").
+  - Refuerza la filosofía "tus datos son tuyos" justo antes de empezar el trabajo invisible de Sprint 4.
+- FIT de fuerza es factible aquí gracias a Sprint 2 (FEAT-008). Sin schema v5 este sprint solo cubriría running.
+- Cuando llegue Fase 1 (SQLite), los exports siguen funcionando sin tocar — la API pública no cambia.
+
+---
+
+### 🏗️ Sprint 4 — Cimentación invisible *(2-3 semanas)*
 
 - **FEAT-006 Fase 1 · SQLite como source of truth en Android** (con fachada `isCapacitor`, PWA intacta).
 - Ningún cambio visible para el usuario, pero desbloquea:
@@ -624,11 +780,12 @@ Salida del sprint: el flujo de carrera queda pulido y la mesa limpia para entrar
   - Schema relacional con índices.
   - Modelo de datos limpio para FEAT-004.
   - Base para Fases 3-5 (encriptación, sync, Health Connect).
+- Esquema SQL refleja el modelo v5 ya estabilizado en Sprint 2 — no se migra dos veces.
 - Riesgo de migración mitigado con `localStorage.backup` retenido 7 días + flag `migrationCompleted`.
 
 ---
 
-### 🎨 Sprint 4 — Reorganización IA *(2-3 semanas)*
+### 🎨 Sprint 5 — Reorganización IA *(2-3 semanas)*
 
 - **FEAT-005 · Bottom nav `Inicio · Entreno · ⊕ · Cuerpo · Tú`**.
 - Se ejecuta sobre SQLite ya estabilizado — evita escribir código nuevo sobre `localStorage` jubilado.
@@ -636,11 +793,11 @@ Salida del sprint: el flujo de carrera queda pulido y la mesa limpia para entrar
 
 ---
 
-### 📊 Sprint 5 — Tests catalog *(1-2 semanas)*
+### 📊 Sprint 6 — Tests catalog *(1-2 semanas)*
 
 - **FEAT-004 · Benchmarks de rendimiento** (Murph, Fran, 1RM, etc.).
-- Entra como tab "Tests" dentro de "Entreno" (creado en Sprint 4).
-- Datos en tabla SQLite `benchmark_results` desde día uno (definida durante Sprint 3).
+- Entra como tab "Tests" dentro de "Entreno" (creado en Sprint 5).
+- Datos en tabla SQLite `benchmark_results` desde día uno (definida durante Sprint 4).
 - PRs aparecen en "Tú → PRs" junto a 5K/10K/etc.
 
 ---
@@ -658,7 +815,9 @@ Salida del sprint: el flujo de carrera queda pulido y la mesa limpia para entrar
 
 - **Sprint 0 antes de TODO**: sin las respuestas, planificar es escribir ficción.
 - **Sprint 1 antes de features**: cerrar lo roto antes de añadir superficie nueva.
-- **Sprint 2 (exports) antes de Sprint 3 (SQLite)**: el orden lógico diría al revés, pero exports no dependen de SQLite y entregan valor visible mientras Sprint 3 trabaja por debajo.
-- **Sprint 3 (SQLite) antes de Sprint 4 (IA)**: no escribir código sobre `localStorage` condenado.
-- **Sprint 4 (IA) antes de Sprint 5 (Tests)**: Tests necesitan el contenedor "Entreno" para entrar limpios.
+- **Sprint 2 (schema v5) antes de Sprint 3 (exports)**: cambiar el modelo de datos antes de querer exportarlo. Sin esto, los exports de fuerza tendrían que parsear strings libres.
+- **Sprint 2 (schema v5) sobre `localStorage`, NO sobre SQLite**: una variable a la vez. Probar el modelo nuevo en runtime conocido reduce riesgo frente a cambiar schema + motor en el mismo movimiento.
+- **Sprint 3 (exports) antes de Sprint 4 (SQLite)**: el orden lógico diría al revés, pero exports no dependen de SQLite y entregan valor visible mientras Sprint 4 trabaja por debajo.
+- **Sprint 4 (SQLite) antes de Sprint 5 (IA)**: no escribir código sobre `localStorage` condenado.
+- **Sprint 5 (IA) antes de Sprint 6 (Tests)**: Tests necesitan el contenedor "Entreno" para entrar limpios.
 - **Hardening al final**: encriptación + sync + Health Connect son features que sólo valen cuando hay base de usuarios real que las pida.
