@@ -730,13 +730,33 @@ La arquitectura actual (`localStorage` ~50MB para la DB ligera + `IndexedDB` par
   - **Nuevos** [`tests/_sqljs-adapter.js`](tests/_sqljs-adapter.js) (test double que expone la misma interfaz `Adapter`, backed por sql.js) + [`tests/sqlite-schema.test.js`](tests/sqlite-schema.test.js) (5 tests) + [`tests/sqlite-repos.test.js`](tests/sqlite-repos.test.js) (20 tests).
   - **Tests verdes**: 100/100 totales (de 75 → 100). Cobertura nueva: migración idempotente, índices presentes, round-trip de cada colección, upsert, ordenación, FK cascade en delete de runs, tipos primitivos preservados en settings, throw cuando custom_programs.save sin _customId.
   - **No tocado**: `data.js`, `app.js`, `app.html`, `run-store.js`. La PWA en `iamluisgb.github.io/arete` no se ve afectada — el código nuevo vive en `www/js/db/` y nadie lo importa todavía.
-- **2026-05-14** — Sub-fase B (próxima): migrador one-shot que lee `localStorage.arete` + IndexedDB `areteRuns` y escribe a `arete.db`. Flag `migration_completed` en `meta` + backup `arete.backup.sqlite` durante 7 días. Tests con fixtures de DB v5 real.
+- **2026-05-14** — Sub-fase B entregada: migrador one-shot. Sigue sin tocar `data.js` — el migrador existe pero nadie lo llama todavía.
+  - **Nuevo** [`www/js/db/migrator.js`](www/js/db/migrator.js): dos entry points.
+    - `migrateFromData(adapter, db, runRoutes)` — pura: recibe el blob v5 ya cargado + Map de heavy fields y escribe a SQLite. Sin DOM, sin localStorage, sin IDB. Idempotente vía flag `meta.migration_completed` (devuelve `{skipped: true}` si ya está).
+    - `migrateFromBrowser(adapter, opts)` — wrapper de runtime: lee `localStorage['arete']`, hidrata heavy fields desde IDB `areteRuns` (via `run-store.getAllRunRoutes`), escribe backup `arete.backup.localstorage` con expiry 7 días, delega en `migrateFromData`.
+    - `restoreLocalStorageBackup()` — rollback manual (reescribe localStorage desde el snapshot).
+  - **Decisión clave**: no hay transacción global envolviendo TODO el migrador. Razón: `workoutsRepo.saveMany`/`bodyLogsRepo.saveMany`/`settingsRepo.setAll`/`tombstonesRepo.addMany` abren cada uno su propio BEGIN/COMMIT, y SQLite no soporta nested BEGINs. La seguridad viene de dos propiedades complementarias: (1) cada escritura es UPSERT (`ON CONFLICT DO UPDATE` / `INSERT OR REPLACE`), así que reintentar tras crash es no-op sobre filas ya escritas; (2) el flag `migration_completed` se marca SOLO tras éxito completo — un crash a mitad → reintento → mismo estado convergente.
+  - **Hydration de runs**: `hydrateRun(log, routes)` mergea el light log con sus heavy fields desde el Map. `_saveRunsDirect` hace los upserts inline (sin abrir BEGIN propio) dentro de una única transacción explícita para el grupo de runs — la única txn del migrador.
+  - **Backup pre-migración**: guarda `{savedAt, raw}` en `localStorage['arete.backup.localstorage']`. Auto-expira a 7 días. Idempotente: si ya hay backup reciente no lo sobrescribe (preserva el primer estado verdaderamente pre-SQLite).
+  - **Nuevo** [`tests/sqlite-migrator.test.js`](tests/sqlite-migrator.test.js): 13 tests con un fixture de DB v5 realista (2 workouts con PRs + sets, 1 body log, 2 runs — uno con heavy/route, otro manual sin heavy — 1 custom program KB, 4 settings, 3 tombstones).
+    - Stats devueltas correctas + flag de meta marcado.
+    - Idempotencia: segunda ejecución devuelve `skipped:true` sin duplicar.
+    - Round-trip de la forma v5 completa de workouts (exerciseId, PRs, startedAt).
+    - Split light/heavy correcto en runs (con heavy → `running_routes` rellena; sin heavy → no fila).
+    - Settings preserva tipos primitivos.
+    - `deletedIds` migra a `deleted_records`.
+    - Edge cases: db vacía, db no-objeto (throw), routes Map ausente, recuperación tras meta corrupted.
+  - **Tests verdes**: 113/113 (de 100 → 113). `cap sync` limpio.
+  - **No tocado**: `data.js`, `app.js`, `run-store.js`, `app.html`. La PWA en `iamluisgb.github.io/arete` sigue intacta.
 - **2026-05-14** — Sub-fase C: modificar `data.js` con switch `isCapacitor` (la PWA mantiene localStorage, Android pasa a SQLite repos detrás de la misma API pública).
 - **2026-05-14** — Sub-fase D: smoke test en Pixel 7a real con DB real de Luis. Confirmar que la PWA sigue intacta tras `cap sync`.
 
 **Archivos modificados/nuevos (sub-fase A)**
 - Nuevos: `www/js/db/schema.js`, `www/js/db/sqlite-adapter.js`, `www/js/db/repos.js`, `tests/_sqljs-adapter.js`, `tests/sqlite-schema.test.js`, `tests/sqlite-repos.test.js`.
 - Modificados: `package.json` (+`@capacitor-community/sqlite@8.1.0`, +`sql.js@^1.14.1` devDep), `package-lock.json`.
+
+**Archivos modificados/nuevos (sub-fase B)**
+- Nuevos: `www/js/db/migrator.js`, `tests/sqlite-migrator.test.js`.
 
 - **2026-05-14** — Fase 2 entregada parcial: GPX + Markdown + ZIP bundle. FIT pendiente como tarea propia.
   - **Nuevo** [`www/js/export/gpx-exporter.js`](www/js/export/gpx-exporter.js): GPX 1.1 con namespace `gpxtpx` de Garmin para HR. `makeHrLookup` usa cursor monotónico (amortized O(1) por trkpt). Descarta HR a más de 30s del trackpoint para evitar muestras stale. Coords con precisión a 6 decimales. `gpxFilename(log)` → `YYYY-MM-DD_slug.gpx`.
