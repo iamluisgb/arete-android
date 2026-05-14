@@ -443,6 +443,27 @@ function bindEvents(db, helpers) {
 
   // Settings section
   document.getElementById('exportBtn').addEventListener('click', () => exportData(db));
+  document.getElementById('exportBundleBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('exportBundleBtn');
+    const label = btn.querySelector('span:nth-child(2)');
+    const original = label.textContent;
+    btn.disabled = true;
+    try {
+      const { exportBundle } = await import('./export/bundle-exporter.js');
+      const summary = await exportBundle(db, {
+        onProgress: ({ stage, pct }) => { label.textContent = `${stage}… ${Math.round(pct)}%`; },
+      });
+      const { toast } = await import('./ui/toast.js');
+      toast(`Exportado: ${summary.workouts} sesiones, ${summary.runsWithRoute} carreras`);
+    } catch (e) {
+      console.error('exportBundle failed:', e);
+      const { toast } = await import('./ui/toast.js');
+      toast('Error al exportar (¿sin conexión?)', 'error');
+    } finally {
+      label.textContent = original;
+      btn.disabled = false;
+    }
+  });
   document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
   document.getElementById('importFile').addEventListener('change', (e) => importData(e, db));
   document.querySelector('#secSettings .sc-row-danger').addEventListener('click', () => clearAllData());
